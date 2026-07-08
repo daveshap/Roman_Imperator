@@ -1,0 +1,2270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Iron Age Agent Battle Prototype - Contact Doctrine Patch v3.1</title>
+<style>
+  :root {
+    --bg: #141414;
+    --panel: #202020;
+    --panel2: #2a2a2a;
+    --text: #e8e0cf;
+    --muted: #b8aa91;
+    --blue: #6db4ff;
+    --red: #ff7979;
+    --gold: #f0c35a;
+    --green: #89d27f;
+  }
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    overflow: hidden;
+  }
+  #layout {
+    display: grid;
+    grid-template-columns: minmax(720px, 1fr) 350px;
+    height: 100vh;
+  }
+  #battleWrap {
+    position: relative;
+    background: #10100d;
+    display: flex;
+    align-items: stretch;
+    justify-content: stretch;
+    min-width: 0;
+  }
+  canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    cursor: crosshair;
+    background: #38352a;
+  }
+  #panel {
+    background: linear-gradient(180deg, #25211b, #171513);
+    border-left: 1px solid #4b4030;
+    box-sizing: border-box;
+    padding: 14px;
+    overflow-y: auto;
+  }
+  h1 {
+    font-size: 18px;
+    margin: 0 0 6px;
+    letter-spacing: 0.02em;
+  }
+  h2 {
+    font-size: 13px;
+    color: var(--gold);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    margin: 18px 0 8px;
+  }
+  p, li {
+    font-size: 12px;
+    line-height: 1.35;
+    color: var(--muted);
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  button {
+    background: #403727;
+    color: var(--text);
+    border: 1px solid #7b6541;
+    border-radius: 5px;
+    padding: 7px 9px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  button:hover { background: #57482f; }
+  button.primary { border-color: #c29a43; color: #fff2c8; }
+  button.danger { border-color: #9a4545; color: #ffd0d0; }
+  button.toggleOn { background: #2f5132; border-color: #79aa60; }
+  .statBox {
+    background: rgba(0,0,0,.22);
+    border: 1px solid #443a2d;
+    border-radius: 6px;
+    padding: 8px;
+    margin-bottom: 8px;
+  }
+  .statLine {
+    display: grid;
+    grid-template-columns: 96px 1fr 38px;
+    gap: 7px;
+    align-items: center;
+    font-size: 12px;
+    margin: 4px 0;
+  }
+  .barOuter {
+    height: 7px;
+    background: #151515;
+    border: 1px solid #3d362d;
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .barInner {
+    height: 100%;
+    width: 0%;
+    background: #d9c27c;
+  }
+  .small { font-size: 11px; color: #a99d87; }
+  .kbd {
+    display: inline-block;
+    border: 1px solid #6e604b;
+    border-bottom-width: 2px;
+    padding: 0 4px;
+    border-radius: 3px;
+    color: #fff0c5;
+    font-size: 11px;
+    background: #2a261f;
+  }
+  #toast {
+    position: absolute;
+    left: 12px;
+    top: 12px;
+    background: rgba(0,0,0,.45);
+    border: 1px solid rgba(255,255,255,.2);
+    color: white;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 12px;
+    pointer-events: none;
+    max-width: 520px;
+  }
+  #legend {
+    position: absolute;
+    left: 12px;
+    bottom: 12px;
+    background: rgba(0,0,0,.42);
+    border: 1px solid rgba(255,255,255,.16);
+    color: white;
+    border-radius: 6px;
+    padding: 7px 9px;
+    font-size: 11px;
+    pointer-events: none;
+  }
+  .dot {
+    display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px; vertical-align:-1px;
+  }
+  .blue { background:#5db1ff; }
+  .red { background:#ff6666; }
+  .grey { background:#a8a8a8; }
+  .yellow { background:#f0c35a; }
+</style>
+</head>
+<body>
+<div id="layout">
+  <div id="battleWrap">
+    <canvas id="battle"></canvas>
+    <div id="toast">Select blue banners or drag-select units. Right-click terrain to order movement. Each dot is an individual soldier.</div>
+    <div id="legend">
+      <span class="dot blue"></span>player &nbsp;
+      <span class="dot red"></span>enemy &nbsp;
+      <span class="dot yellow"></span>banner/officer &nbsp;
+      <span class="dot grey"></span>wounded/routing fades
+    </div>
+  </div>
+  <aside id="panel">
+    <h1>Iron Age Agent Battle v3.1</h1>
+    <p>Playable prototype: individual-agent formation combat with banners, officers, delayed orders, fatigue, wounds, fear, morale contagion, local perception, persistent standing attack doctrine, formed-unit target preference, elastic front-rank contact, and emergent routing.</p>
+
+    <h2>Commands</h2>
+    <div class="row">
+      <button id="pauseBtn" class="primary">Pause</button>
+      <button id="resetBtn">Reset</button>
+      <button id="debugBtn">Debug</button>
+    </div>
+    <div class="row">
+      <button id="advanceBtn">Advance</button>
+      <button id="holdBtn">Hold</button>
+      <button id="withdrawBtn">Withdraw</button>
+      <button id="rallyBtn">Rally/Reform</button>
+      <button id="skirmishBtn">Skirmish</button>
+    </div>
+    <div class="row">
+      <button id="selAllBtn">Select All</button>
+      <button id="selSkirmBtn">Skirmishers</button>
+      <button id="selLineBtn">Line</button>
+      <button id="selReserveBtn">Reserve</button>
+    </div>
+    <p class="small"><span class="kbd">Left click</span> select &nbsp; <span class="kbd">Shift</span> add &nbsp; <span class="kbd">Drag</span> box-select &nbsp; <span class="kbd">Right click</span> move &nbsp; <span class="kbd">A/H/W/G/S</span> orders &nbsp; <span class="kbd">D</span> debug &nbsp; <span class="kbd">Space</span> pause</p>
+
+    <h2>Battle State</h2>
+    <div class="statBox" id="armyStats"></div>
+
+    <h2>Selected Unit</h2>
+    <div class="statBox" id="selectedStats">No unit selected.</div>
+
+    <h2>Model Notes</h2>
+    <p>Soldiers do not know the whole battlefield. They remember their banner, rank/file neighbors, and last standing order. They can lose contact, attach to nearby friends, panic, or rout. Formations are maintained by local relationship rules rather than rigid rectangles; front-rank men fight while rear ranks support unless a gap opens.</p>
+  </aside>
+</div>
+<script>
+(() => {
+'use strict';
+
+// ------------------------------------------------------------
+// Utility
+// ------------------------------------------------------------
+const canvas = document.getElementById('battle');
+const ctx = canvas.getContext('2d', { alpha: false });
+
+const WORLD_W = 1280;
+const WORLD_H = 720;
+const GRID_CELL = 28;
+const SOLDIER_R = 2.7;
+const COMBAT_RANGE = 11.2;              // weapon/contact distance for actual blows
+const CONTACT_TRIGGER_RANGE = 17.2;     // front-rank men begin pressing before sword range
+const MELEE_ATTACK_RANGE = 12.9;        // a short lunge, not full body-overlap
+const CONTACT_STANDOFF = 7.0;          // banner standoff leaves front ranks in weapon contact
+const PERCEPTION_RANGE = 44;
+const ORDER_SHOUT_RANGE = 150;
+const BANNER_VIS_RANGE = 230;
+const FORMATION_BOND_RANGE = 26;
+const FORMATION_NEIGHBOR_RANGE = 42;
+const FORMATION_SLOT_HARD_LEASH = 95;
+const TWO_PI = Math.PI * 2;
+const SIDE_BLUE = 0;
+const SIDE_RED = 1;
+const SIDE_NAMES = ['Blue Rome', 'Red Rome'];
+
+let soldiers = [];
+let units = [];
+let projectiles = [];
+let selectedUnits = new Set();
+let hoveredUnit = null;
+let grid = new Map();
+let battleTime = 0;
+let paused = false;
+let debug = false;
+let gameOver = false;
+let winnerText = '';
+let lastFrame = performance.now();
+let aiTimer = 0;
+let metricTimer = 0;
+let uiTimer = 0;
+let toastTimer = 7;
+let rngSeed = 123456789;
+let mouse = { x: 0, y: 0, down: false, dragStart: null, dragEnd: null, dragging: false };
+
+function rand() {
+  // Deterministic xorshift-ish LCG. Good enough for replayable prototypes.
+  rngSeed = (1664525 * rngSeed + 1013904223) >>> 0;
+  return rngSeed / 4294967296;
+}
+function randRange(a, b) { return a + (b - a) * rand(); }
+function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+function lerp(a, b, t) { return a + (b - a) * t; }
+function hypot(x, y) { return Math.sqrt(x*x + y*y); }
+function dist2(a, b, c, d) { const x = a - c, y = b - d; return x*x + y*y; }
+function angleTo(ax, ay, bx, by) { return Math.atan2(by - ay, bx - ax); }
+function normAngle(a) {
+  while (a > Math.PI) a -= TWO_PI;
+  while (a < -Math.PI) a += TWO_PI;
+  return a;
+}
+function angleLerp(a, b, t) {
+  return a + normAngle(b - a) * t;
+}
+function normalize(x, y) {
+  const d = Math.sqrt(x*x + y*y);
+  return d > 1e-6 ? [x/d, y/d] : [0, 0];
+}
+function smoothstep(x) {
+  x = clamp(x, 0, 1);
+  return x * x * (3 - 2 * x);
+}
+function fmtPct(v) { return Math.round(clamp(v, 0, 1) * 100) + '%'; }
+function formatTime(t) {
+  const m = Math.floor(t / 60);
+  const s = Math.floor(t % 60).toString().padStart(2, '0');
+  return m + ':' + s;
+}
+
+function resizeCanvas() {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  canvas.width = Math.floor(rect.width * dpr);
+  canvas.height = Math.floor(rect.height * dpr);
+  ctx.setTransform(dpr * rect.width / WORLD_W, 0, 0, dpr * rect.height / WORLD_H, 0, 0);
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+function screenToWorld(e) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - rect.left) / rect.width * WORLD_W,
+    y: (e.clientY - rect.top) / rect.height * WORLD_H
+  };
+}
+
+// ------------------------------------------------------------
+// Data creation
+// ------------------------------------------------------------
+const TYPE_STATS = {
+  skirmisher: {
+    label: 'Velites / Skirmishers',
+    count: 36, cols: 12, rows: 3, spacing: 9.5,
+    baseSpeed: 50, bannerSpeed: 28,
+    discipline: [0.35, 0.62], courage: [0.35, 0.60], skill: [0.34, 0.55], endurance: [0.55, 0.82],
+    shield: [0.22, 0.45], formation: [0.28, 0.55], ammo: 5,
+    role: 'skirmisher'
+  },
+  line: {
+    label: 'Hastati / Line Infantry',
+    count: 80, cols: 16, rows: 5, spacing: 7.3,
+    baseSpeed: 42, bannerSpeed: 22,
+    discipline: [0.52, 0.78], courage: [0.48, 0.76], skill: [0.46, 0.72], endurance: [0.48, 0.76],
+    shield: [0.50, 0.76], formation: [0.54, 0.82], ammo: 0,
+    role: 'line'
+  },
+  reserve: {
+    label: 'Triarii / Veteran Reserve',
+    count: 60, cols: 15, rows: 4, spacing: 7.8,
+    baseSpeed: 39, bannerSpeed: 19,
+    discipline: [0.70, 0.94], courage: [0.66, 0.92], skill: [0.62, 0.90], endurance: [0.55, 0.84],
+    shield: [0.60, 0.88], formation: [0.72, 0.96], ammo: 0,
+    role: 'reserve'
+  }
+};
+
+function createUnit(side, type, index, bx, by) {
+  const st = TYPE_STATS[type];
+  const unit = {
+    id: units.length,
+    side, type, index,
+    label: st.label,
+    soldiers: [],
+    bannerX: bx,
+    bannerY: by,
+    initialX: bx,
+    initialY: by,
+    facing: side === SIDE_BLUE ? -Math.PI / 2 : Math.PI / 2,
+    targetFacing: side === SIDE_BLUE ? -Math.PI / 2 : Math.PI / 2,
+    cols: st.cols,
+    rows: st.rows,
+    spacing: st.spacing,
+    baseSpeed: st.baseSpeed,
+    bannerSpeed: st.bannerSpeed,
+    role: st.role,
+    order: {
+      type: 'HOLD',
+      targetX: bx,
+      targetY: by,
+      urgency: 0.4,
+      version: 1,
+      issuedAt: 0,
+      standing: false,
+      trackTargetId: -1
+    },
+    orderVersion: 1,
+    officerAlive: true,
+    officerWound: 0,
+    bannerLost: false,
+    bannerLostTimer: 0,
+    aliveCount: 0,
+    routedCount: 0,
+    incapacitatedCount: 0,
+    casualties: 0,
+    cohesion: 1,
+    avgFear: 0,
+    avgFatigue: 0,
+    avgInjury: 0,
+    avgDiscipline: 0,
+    avgFormationSkill: 0,
+    avgWeaponSkill: 0,
+    avgConstitution: 0,
+    pressure: 0,
+    visibleEnemies: 0,
+    lastMetricAt: 0,
+    broken: false,
+    selected: false,
+    lastEnemySeenX: side === SIDE_BLUE ? bx : bx,
+    lastEnemySeenY: side === SIDE_BLUE ? by - 120 : by + 120,
+    liveTargetX: bx,
+    liveTargetY: by
+  };
+  units.push(unit);
+
+  for (let i = 0; i < st.count; i++) {
+    const file = i % st.cols;
+    const rank = Math.floor(i / st.cols);
+    const slot = formationSlot(unit, file, rank, bx, by, unit.facing);
+    const discipline = randRange(st.discipline[0], st.discipline[1]);
+    const courage = randRange(st.courage[0], st.courage[1]);
+    const formationSkill = randRange(st.formation[0], st.formation[1]);
+    const endurance = randRange(st.endurance[0], st.endurance[1]);
+    const skill = randRange(st.skill[0], st.skill[1]);
+    const shield = randRange(st.shield[0], st.shield[1]);
+    // Individual human variation: not just skill/morale, but body, senses, pain response, and robustness.
+    const constitution = randRange(0.84, 1.18);
+    const painTolerance = randRange(0.78, 1.20);
+    const moraleBase = randRange(-0.045, 0.055);
+    const vision = randRange(0.86, 1.13);
+    const hearing = randRange(0.84, 1.15);
+    const bodySize = randRange(0.92, 1.08);
+    const obedience = clamp(discipline + randRange(-0.11, 0.11), 0.18, 1.0);
+    const toughness = clamp(randRange(0.34, 0.78) + courage * 0.18 + constitution * 0.08, 0.25, 1.0);
+    const collapseAt = 0.92 + constitution * 0.18 + toughness * 0.11;
+    const bodyMass = clamp(bodySize * randRange(0.92, 1.10) + (type === 'reserve' ? 0.04 : 0), 0.78, 1.24);
+    const moraleBias = randRange(-0.025, 0.025);
+    const slotJitterAcross = randRange(-0.38, 0.38);
+    const slotJitterDepth = randRange(-0.32, 0.32);
+    const s = {
+      id: soldiers.length,
+      unitId: unit.id,
+      side,
+      type,
+      leftNeighbor: -1,
+      rightNeighbor: -1,
+      frontNeighbor: -1,
+      rearNeighbor: -1,
+      file,
+      rank,
+      x: slot.x + randRange(-1.7, 1.7),
+      y: slot.y + randRange(-1.7, 1.7),
+      vx: 0,
+      vy: 0,
+      facing: unit.facing,
+      radius: SOLDIER_R * bodySize,
+      bodySize,
+      constitution,
+      painTolerance,
+      moraleBase,
+      vision,
+      hearing,
+      obedience,
+      toughness,
+      collapseAt,
+      bodyMass,
+      slotJitterAcross,
+      slotJitterDepth,
+      alive: true,
+      incapacitated: false,
+      state: 'FORMING',
+      fatigue: randRange(0.02, 0.08),
+      longFatigue: randRange(0, 0.03),
+      fear: randRange(0.05, 0.12),
+      fearTimer: 0,
+      injury: 0,
+      pain: 0,
+      bleeding: 0,
+      stun: 0,
+      pressure: 0,
+      discipline,
+      courage,
+      formationSkill,
+      endurance,
+      weaponSkill: skill,
+      shieldSkill: shield,
+      moraleBias,
+      collapseThreshold: collapseAt,
+      reaction: randRange(0.45, 0.9),
+      aggression: randRange(0.35, 0.75),
+      panicThreshold: clamp(0.70 + courage * 0.18 + discipline * 0.12 + moraleBase, 0.62, 1.05),
+      moraleMemory: 0,
+      memBannerX: bx,
+      memBannerY: by,
+      memFacing: unit.facing,
+      lastSawBanner: 0,
+      lastSawOfficer: 0,
+      lastOrderType: 'HOLD',
+      orderTargetX: bx,
+      orderTargetY: by,
+      knownOrderVersion: 1,
+      orderConfidence: 1,
+      localFriends: 0,
+      localEnemies: 0,
+      localRouters: 0,
+      nearestEnemy: -1,
+      nearestEnemyD2: 999999,
+      nearestFriend: -1,
+      attackCd: randRange(0.2, 1.3),
+      throwCd: randRange(0.5, 2.8),
+      ammo: st.ammo,
+      combatImpulseX: 0,
+      combatImpulseY: 0,
+      lastHitBy: -1,
+      timeInState: 0,
+      killCount: 0,
+      leftNeighbor: -1,
+      rightNeighbor: -1,
+      frontNeighbor: -1,
+      rearNeighbor: -1
+    };
+    soldiers.push(s);
+    unit.soldiers.push(s.id);
+  }
+
+  // Remember rank/file relationships. These links are the main formation glue during combat:
+  // soldiers try to keep their shield-neighbors and the men ahead/behind at trained spacing.
+  for (const sid of unit.soldiers) {
+    const s = soldiers[sid];
+    const idx = s.rank * unit.cols + s.file;
+    s.leftNeighbor = s.file > 0 ? unit.soldiers[idx - 1] : -1;
+    s.rightNeighbor = s.file < unit.cols - 1 ? unit.soldiers[idx + 1] : -1;
+    s.frontNeighbor = s.rank > 0 ? unit.soldiers[idx - unit.cols] : -1;
+    s.rearNeighbor = s.rank < unit.rows - 1 ? unit.soldiers[idx + unit.cols] : -1;
+  }
+  return unit;
+}
+
+function formationSlot(unit, file, rank, bx = unit.bannerX, by = unit.bannerY, facing = unit.facing) {
+  const fx = Math.cos(facing), fy = Math.sin(facing);
+  const rx = -fy, ry = fx;
+  const across = (file - (unit.cols - 1) / 2) * unit.spacing;
+  const depth = ((unit.rows - 1) / 2 - rank) * unit.spacing;
+  return { x: bx + rx * across + fx * depth, y: by + ry * across + fy * depth };
+}
+
+function soldierSlot(s, unit, bx = s.memBannerX, by = s.memBannerY, facing = s.memFacing) {
+  const base = formationSlot(unit, s.file, s.rank, bx, by, facing);
+  const fx = Math.cos(facing), fy = Math.sin(facing);
+  const rx = -fy, ry = fx;
+  return {
+    x: base.x + rx * (s.slotJitterAcross || 0) + fx * (s.slotJitterDepth || 0),
+    y: base.y + ry * (s.slotJitterAcross || 0) + fy * (s.slotJitterDepth || 0)
+  };
+}
+
+function soldierIdAt(unit, file, rank) {
+  if (file < 0 || file >= unit.cols || rank < 0 || rank >= unit.rows) return -1;
+  const idx = rank * unit.cols + file;
+  return idx < unit.soldiers.length ? unit.soldiers[idx] : -1;
+}
+
+function linkUnitNeighbors(unit) {
+  for (const sid of unit.soldiers) {
+    const s = soldiers[sid];
+    s.leftNeighbor = soldierIdAt(unit, s.file - 1, s.rank);
+    s.rightNeighbor = soldierIdAt(unit, s.file + 1, s.rank);
+    s.frontNeighbor = soldierIdAt(unit, s.file, s.rank - 1);
+    s.rearNeighbor = soldierIdAt(unit, s.file, s.rank + 1);
+  }
+}
+
+function activeNeighbor(s, key) {
+  const id = s[key];
+  if (id === undefined || id < 0) return null;
+  const o = soldiers[id];
+  if (!o || !o.alive || o.incapacitated) return null;
+  if (o.state === 'ROUTING' || o.state === 'PANICKING') return null;
+  return o;
+}
+
+function officerPos(unit) {
+  const fx = Math.cos(unit.facing), fy = Math.sin(unit.facing);
+  return {
+    x: unit.bannerX + fx * (unit.rows * unit.spacing * 0.48 + 7),
+    y: unit.bannerY + fy * (unit.rows * unit.spacing * 0.48 + 7)
+  };
+}
+
+function getNeighborSoldier(s, key) {
+  const id = s[key];
+  if (id == null || id < 0) return null;
+  const o = soldiers[id];
+  return o && o.alive && !o.incapacitated ? o : null;
+}
+
+function isSteadySoldier(o) {
+  return !!(o && o.alive && !o.incapacitated && o.state !== 'ROUTING' && o.state !== 'PANICKING');
+}
+
+function canOffensivelyEngage(s, unit) {
+  // Front-rank men may close with the enemy. Rear ranks should mostly preserve
+  // files unless the man ahead is down, gone, or the formation has already torn open.
+  if (s.rank === 0) return true;
+  const front = getNeighborSoldier(s, 'frontNeighbor');
+  if (!isSteadySoldier(front) || front.unitId !== s.unitId) return true;
+  const fd = hypot(front.x - s.x, front.y - s.y);
+  if (fd > unit.spacing * 2.35) return true; // visible gap in the file
+  if (unit.cohesion < 0.28) return true;     // local doctrine has broken down
+  return false;
+}
+
+function liveOrderTarget(unit) {
+  return {
+    x: Number.isFinite(unit.liveTargetX) ? unit.liveTargetX : unit.order.targetX,
+    y: Number.isFinite(unit.liveTargetY) ? unit.liveTargetY : unit.order.targetY
+  };
+}
+
+function isFormationNeighborUsable(o) {
+  return !!(o && o.alive && !o.incapacitated && o.state !== 'ROUTING' && o.state !== 'PANICKING');
+}
+
+function hasFrontGap(s, unit) {
+  if (s.rank === 0 || s.frontNeighbor < 0) return true;
+  const f = soldiers[s.frontNeighbor];
+  if (!isFormationNeighborUsable(f)) return true;
+  return hypot(f.x - s.x, f.y - s.y) > unit.spacing * 1.95;
+}
+
+function unitFrontDepth(unit) {
+  return Math.max(0, (unit.rows - 1) * unit.spacing * 0.5);
+}
+
+function standingTargetPoint(unit, target, orderType = unit.order.type) {
+  if (!target) return { x: unit.order.targetX, y: unit.order.targetY };
+  if (orderType === 'SKIRMISH') {
+    let away = normalize(unit.bannerX - target.bannerX, unit.bannerY - target.bannerY);
+    if (away[0] === 0 && away[1] === 0) away = [0, unit.side === SIDE_BLUE ? 1 : -1];
+    const lateral = (unit.index - 2) * 8;
+    const rx = -away[1], ry = away[0];
+    const desiredRange = 112;
+    return {
+      x: clamp(target.bannerX + away[0] * desiredRange + rx * lateral, 25, WORLD_W - 25),
+      y: clamp(target.bannerY + away[1] * desiredRange + ry * lateral, 25, WORLD_H - 25)
+    };
+  }
+
+  let dir = normalize(target.bannerX - unit.bannerX, target.bannerY - unit.bannerY);
+  if (dir[0] === 0 && dir[1] === 0) dir = [Math.cos(unit.facing), Math.sin(unit.facing)];
+  // Stop banner centers before formation bodies overlap, but leave the two
+  // front ranks close enough for shield/sword contact. v2.1 used weapon range as
+  // the center standoff, which could make units halt and stare at one another.
+  // The banner remains conservative; only front-rank individuals lean into contact.
+  let contactGap = CONTACT_STANDOFF;
+  const targetAliveFrac = target.aliveCount / Math.max(1, target.soldiers.length);
+  const targetRoutingFrac = target.routedCount / Math.max(1, target.aliveCount || 1);
+  if (target.cohesion < 0.34 || targetRoutingFrac > 0.22 || targetAliveFrac < 0.55) {
+    contactGap *= 0.68; // pursuit pressure after the enemy begins to give way
+  }
+  const gap = unitFrontDepth(unit) + unitFrontDepth(target) + contactGap;
+  return {
+    x: clamp(target.bannerX - dir[0] * gap, 25, WORLD_W - 25),
+    y: clamp(target.bannerY - dir[1] * gap, 25, WORLD_H - 25)
+  };
+}
+
+function resolveStandingOrderTarget(unit) {
+  // Attack/skirmish are standing doctrines: keep pressing/chasing the currently
+  // assigned enemy until the player or AI explicitly orders something else.
+  if (!unit.order.standing || (unit.order.type !== 'ADVANCE' && unit.order.type !== 'ATTACK' && unit.order.type !== 'SKIRMISH')) return;
+  let target = units[unit.order.trackTargetId];
+  if (!target || target.side === unit.side || target.aliveCount <= 0 || target.broken) {
+    target = unit.order.type === 'SKIRMISH' ? nearestEnemyUnit(unit) : preferredAttackTarget(unit);
+    unit.order.trackTargetId = target ? target.id : -1;
+  }
+  if (!target) return;
+  const p = standingTargetPoint(unit, target, unit.order.type);
+  unit.order.targetX = p.x;
+  unit.order.targetY = p.y;
+  unit.liveTargetX = p.x;
+  unit.liveTargetY = p.y;
+}
+
+function resetBattle() {
+  soldiers = [];
+  units = [];
+  projectiles = [];
+  selectedUnits.clear();
+  battleTime = 0;
+  aiTimer = 0;
+  metricTimer = 0;
+  uiTimer = 0;
+  toastTimer = 7;
+  gameOver = false;
+  winnerText = '';
+  rngSeed = 123456789;
+  paused = false;
+  document.getElementById('pauseBtn').textContent = 'Pause';
+
+  const xs = [240, 440, 640, 840, 1040];
+  for (let i = 0; i < 5; i++) createUnit(SIDE_BLUE, 'skirmisher', i, xs[i], 428);
+  for (let i = 0; i < 5; i++) createUnit(SIDE_BLUE, 'line', i, xs[i], 525);
+  for (let i = 0; i < 5; i++) createUnit(SIDE_BLUE, 'reserve', i, xs[i], 626);
+
+  for (let i = 0; i < 5; i++) createUnit(SIDE_RED, 'skirmisher', i, xs[i], 292);
+  for (let i = 0; i < 5; i++) createUnit(SIDE_RED, 'line', i, xs[i], 195);
+  for (let i = 0; i < 5; i++) createUnit(SIDE_RED, 'reserve', i, xs[i], 94);
+
+  for (const u of units) updateUnitMetrics(u, true);
+  showToast('v3.1 loaded: front-rank contact doctrine patched. Banners stop safely, but attacking front ranks now press, lunge, shove, and fight instead of staring across a gap.');
+}
+
+// ------------------------------------------------------------
+// Orders
+// ------------------------------------------------------------
+function issueOrder(unit, type, targetX = unit.bannerX, targetY = unit.bannerY, urgency = 0.5, options = {}) {
+  if (unit.side !== SIDE_BLUE && unit.side !== SIDE_RED) return;
+  const tx = clamp(targetX, 25, WORLD_W - 25);
+  const ty = clamp(targetY, 25, WORLD_H - 25);
+  const u = clamp(urgency, 0, 1);
+  const standing = !!options.standing;
+  const trackTargetId = Number.isInteger(options.trackTargetId) ? options.trackTargetId : (Number.isInteger(options.targetUnitId) ? options.targetUnitId : -1);
+  const prev = unit.order;
+
+  // Do not churn command versions when the same standing intent is being maintained.
+  // Soldiers update a moving standing target by watching the banner/officer, not by
+  // receiving a brand-new command every second.
+  if (prev && prev.type === type && prev.standing === standing && prev.trackTargetId === trackTargetId && dist2(prev.targetX, prev.targetY, tx, ty) < 18 * 18 && Math.abs(prev.urgency - u) < 0.08 && battleTime - prev.issuedAt < 3.2) {
+    return;
+  }
+  unit.order = {
+    type,
+    targetX: tx,
+    targetY: ty,
+    urgency: u,
+    version: ++unit.orderVersion,
+    issuedAt: battleTime,
+    standing,
+    trackTargetId
+  };
+  unit.liveTargetX = tx;
+  unit.liveTargetY = ty;
+}
+
+function issueOrderToSelection(type) {
+  const selected = Array.from(selectedUnits).map(id => units[id]).filter(u => u && u.side === SIDE_BLUE && !u.broken);
+  if (!selected.length) {
+    showToast('No blue unit selected. Click a banner or drag-select units first.');
+    return;
+  }
+  if (type === 'HOLD') {
+    selected.forEach(u => issueOrder(u, 'HOLD', u.bannerX, u.bannerY, 0.2, { standing: false, trackTargetId: -1 }));
+  } else if (type === 'ADVANCE') {
+    selected.forEach(u => {
+      const orderType = u.type === 'skirmisher' ? 'SKIRMISH' : 'ATTACK';
+      const target = u.type === 'skirmisher' ? nearestEnemyUnit(u) : preferredAttackTarget(u);
+      if (target) {
+        const p = standingTargetPoint(u, target, orderType);
+        issueOrder(u, orderType, p.x, p.y, 0.72, { standing: true, trackTargetId: target.id });
+      } else {
+        const ty = Math.max(80, u.bannerY - 180);
+        issueOrder(u, 'MOVE', u.bannerX, ty, 0.72, { standing: false, trackTargetId: -1 });
+      }
+    });
+  } else if (type === 'WITHDRAW') {
+    selected.forEach(u => issueOrder(u, 'WITHDRAW', u.bannerX, WORLD_H - 52, 0.82, { standing: false, trackTargetId: -1 }));
+  } else if (type === 'RALLY') {
+    selected.forEach(u => issueOrder(u, 'RALLY', u.initialX, Math.min(WORLD_H - 60, u.initialY + 26), 0.45, { standing: false, trackTargetId: -1 }));
+  } else if (type === 'SKIRMISH') {
+    selected.forEach(u => {
+      const target = nearestEnemyUnit(u);
+      if (target) {
+        const p = standingTargetPoint(u, target, 'SKIRMISH');
+        issueOrder(u, 'SKIRMISH', p.x, p.y, 0.55, { standing: true, trackTargetId: target.id });
+      } else {
+        issueOrder(u, 'SKIRMISH', u.bannerX, Math.max(80, u.bannerY - 130), 0.55, { standing: false, trackTargetId: -1 });
+      }
+    });
+  }
+  showToast(type + ' order issued to ' + selected.length + ' unit' + (selected.length === 1 ? '' : 's') + '. Attack/skirmish are standing orders until Hold, Withdraw, Rally, or right-click Move rescinds them.');
+}
+
+function issueMoveOrder(x, y) {
+  const selected = Array.from(selectedUnits).map(id => units[id]).filter(u => u && u.side === SIDE_BLUE && !u.broken);
+  if (!selected.length) {
+    showToast('Right-click ignored: select blue units first.');
+    return;
+  }
+  let cx = 0, cy = 0;
+  for (const u of selected) { cx += u.bannerX; cy += u.bannerY; }
+  cx /= selected.length; cy /= selected.length;
+  for (const u of selected) {
+    const tx = x + (u.bannerX - cx);
+    const ty = y + (u.bannerY - cy);
+    issueOrder(u, 'MOVE', tx, ty, 0.58, { standing: false, trackTargetId: -1 });
+  }
+  showToast('Fixed move order issued; standing attack/skirmish intent is rescinded. Units preserve relative spacing, but individuals can still lag, misunderstand, or rout.');
+}
+
+function nearestEnemyUnit(unit) {
+  let best = null, bd = Infinity;
+  for (const other of units) {
+    if (other.side === unit.side || other.aliveCount <= 0 || other.broken) continue;
+    const d = dist2(unit.bannerX, unit.bannerY, other.bannerX, other.bannerY);
+    if (d < bd) { bd = d; best = other; }
+  }
+  return best;
+}
+
+function preferredAttackTarget(unit) {
+  // Targeting doctrine matters as much as movement doctrine. Formed melee units
+  // should not turn their standing advance into a staring contest with a loose
+  // skirmisher screen while the real enemy line is right behind it.
+  let best = null, bestScore = -Infinity;
+  for (const other of units) {
+    if (other.side === unit.side || other.aliveCount <= 0 || other.broken) continue;
+    const d = hypot(unit.bannerX - other.bannerX, unit.bannerY - other.bannerY);
+    const lateral = Math.abs(unit.bannerX - other.bannerX);
+    const weak = (1 - other.cohesion) * 70 + other.avgFear * 35 + other.casualties / Math.max(1, other.soldiers.length) * 70;
+    let score = -d - lateral * 0.22 + weak;
+
+    if (unit.type === 'skirmisher') {
+      score += other.type === 'skirmisher' ? 100 : 18;
+      if (d < 150) score += 32;
+    } else {
+      // Prefer a formed line/reserve as the standing target. A skirmisher is a
+      // target only when it is physically blocking the advance or already fragile.
+      score += other.type === 'skirmisher' ? -95 : 235;
+      if (other.type === 'skirmisher' && d < 95) score += 190;
+      if (other.type === 'skirmisher' && other.cohesion < 0.30) score += 70;
+      if (unit.type === 'reserve' && other.type === 'line') score += 25;
+    }
+
+    if (score > bestScore) { bestScore = score; best = other; }
+  }
+  return best || nearestEnemyUnit(unit);
+}
+
+function weakestEnemyUnitSeenBy(unit) {
+  let best = null, bestScore = -Infinity;
+  for (const other of units) {
+    if (other.side === unit.side || other.aliveCount <= 0 || other.broken) continue;
+    const d = hypot(unit.bannerX - other.bannerX, unit.bannerY - other.bannerY);
+    if (d > 620) continue;
+    const score = (1 - other.cohesion) * 2.4 + other.avgFear * 1.3 + other.casualties / Math.max(1, other.soldiers.length) * 1.6 - d / 520;
+    if (score > bestScore) { bestScore = score; best = other; }
+  }
+  return best || nearestEnemyUnit(unit);
+}
+
+// ------------------------------------------------------------
+// Spatial grid
+// ------------------------------------------------------------
+function cellKey(ix, iy) { return ix + ',' + iy; }
+function buildGrid() {
+  grid.clear();
+  for (const s of soldiers) {
+    if (!s.alive || s.incapacitated) continue;
+    const ix = Math.floor(s.x / GRID_CELL);
+    const iy = Math.floor(s.y / GRID_CELL);
+    const key = cellKey(ix, iy);
+    let arr = grid.get(key);
+    if (!arr) { arr = []; grid.set(key, arr); }
+    arr.push(s.id);
+  }
+}
+function nearbyIds(x, y, radiusCells) {
+  const cx = Math.floor(x / GRID_CELL);
+  const cy = Math.floor(y / GRID_CELL);
+  const out = [];
+  for (let yy = cy - radiusCells; yy <= cy + radiusCells; yy++) {
+    for (let xx = cx - radiusCells; xx <= cx + radiusCells; xx++) {
+      const arr = grid.get(cellKey(xx, yy));
+      if (arr) out.push(...arr);
+    }
+  }
+  return out;
+}
+
+// ------------------------------------------------------------
+// Simulation: unit layer
+// ------------------------------------------------------------
+function updateUnits(dt) {
+  for (const unit of units) {
+    if (unit.aliveCount <= 0 || unit.broken) continue;
+
+    // Banners can be temporarily lost when cohesion collapses under pressure.
+    if (unit.bannerLost) {
+      unit.bannerLostTimer -= dt;
+      if (unit.bannerLostTimer <= 0 && unit.aliveCount > unit.soldiers.length * 0.18) {
+        unit.bannerLost = false;
+        unit.orderVersion++;
+      }
+    }
+
+    const enemy = nearestEnemyUnit(unit);
+    if (enemy) {
+      unit.lastEnemySeenX = lerp(unit.lastEnemySeenX, enemy.bannerX, dt * 0.6);
+      unit.lastEnemySeenY = lerp(unit.lastEnemySeenY, enemy.bannerY, dt * 0.6);
+      const desiredFace = angleTo(unit.bannerX, unit.bannerY, enemy.bannerX, enemy.bannerY);
+      unit.targetFacing = desiredFace;
+    }
+
+    let tx = unit.order.targetX;
+    let ty = unit.order.targetY;
+    let move = false;
+    let speedFactor = 1;
+
+    // Standing aggressive orders are persistent intent. The banner path tracks
+    // a live enemy at a formation-safe standoff without issuing a new order version.
+    if (unit.order.standing && (unit.order.type === 'ADVANCE' || unit.order.type === 'ATTACK' || unit.order.type === 'SKIRMISH')) {
+      resolveStandingOrderTarget(unit);
+      tx = unit.order.targetX;
+      ty = unit.order.targetY;
+    }
+    unit.liveTargetX = tx;
+    unit.liveTargetY = ty;
+
+    switch (unit.order.type) {
+      case 'HOLD':
+        move = false;
+        speedFactor = 0;
+        break;
+      case 'MOVE':
+        move = true;
+        speedFactor = 0.82;
+        break;
+      case 'ADVANCE':
+        move = true;
+        speedFactor = 0.92; // disciplined advance, not a sprint into individual duels
+        break;
+      case 'ATTACK':
+        move = true;
+        speedFactor = 1.02;
+        break;
+      case 'SKIRMISH':
+        move = true;
+        speedFactor = 1.08;
+        if (enemy) {
+          const d = hypot(unit.bannerX - enemy.bannerX, unit.bannerY - enemy.bannerY);
+          const desired = 95;
+          const ax = unit.bannerX - enemy.bannerX;
+          const ay = unit.bannerY - enemy.bannerY;
+          const n = normalize(ax, ay);
+          // Skirmishers advance until in javelin range, then hover away from the enemy.
+          if (d < desired) {
+            tx = unit.bannerX + n[0] * 90;
+            ty = unit.bannerY + n[1] * 90;
+          } else if (d < 145) {
+            tx = unit.bannerX;
+            ty = unit.bannerY;
+            move = false;
+          }
+          unit.liveTargetX = tx;
+          unit.liveTargetY = ty;
+        }
+        break;
+      case 'WITHDRAW':
+        move = true;
+        speedFactor = 1.18;
+        unit.targetFacing = unit.side === SIDE_BLUE ? -Math.PI / 2 : Math.PI / 2;
+        break;
+      case 'RALLY':
+        move = true;
+        speedFactor = 0.55;
+        break;
+    }
+
+    // Formation commanders slow the banner when men are badly lagging.
+    const lagPenalty = clamp((1 - unit.cohesion) * 1.15 + unit.routedCount / Math.max(1, unit.aliveCount) * 0.7, 0, 0.70);
+    const fatiguePenalty = clamp(unit.avgFatigue * 0.35, 0, 0.35);
+    const officerPenalty = unit.officerAlive ? 0 : 0.22;
+    const bannerPenalty = unit.bannerLost ? 0.55 : 0;
+    const orderSpeed = unit.bannerSpeed * speedFactor * (1 - lagPenalty) * (1 - fatiguePenalty) * (1 - officerPenalty) * (1 - bannerPenalty);
+
+    if (move) {
+      const dx = tx - unit.bannerX, dy = ty - unit.bannerY;
+      const d = Math.sqrt(dx*dx + dy*dy);
+      if (d > 1) {
+        const step = Math.min(d, orderSpeed * dt);
+        unit.bannerX += dx / d * step;
+        unit.bannerY += dy / d * step;
+        if (unit.order.type !== 'WITHDRAW' && d > 10) unit.targetFacing = Math.atan2(dy, dx);
+      }
+    }
+
+    // Keep formations oriented toward enemy, but not instantly.
+    const faceRate = unit.officerAlive ? 1.4 : 0.55;
+    unit.facing = angleLerp(unit.facing, unit.targetFacing, dt * faceRate);
+    unit.bannerX = clamp(unit.bannerX, 18, WORLD_W - 18);
+    unit.bannerY = clamp(unit.bannerY, 18, WORLD_H - 18);
+
+    // Officer danger: officers are not super-units. If enemy bodies reach the banner area, leadership can collapse.
+    if (unit.officerAlive && unit.visibleEnemies > 8 && unit.pressure > 0.32 && rand() < dt * 0.015 * unit.visibleEnemies) {
+      unit.officerWound += randRange(0.1, 0.28);
+      if (unit.officerWound > 0.8 || rand() < 0.08) {
+        unit.officerAlive = false;
+        unit.orderVersion++;
+        for (const sid of unit.soldiers) {
+          const s = soldiers[sid];
+          if (s.alive && !s.incapacitated) s.fear += randRange(0.08, 0.18);
+        }
+        showToast((unit.side === SIDE_BLUE ? 'A blue' : 'A red') + ' officer has fallen. Order clarity drops nearby.');
+      }
+    }
+
+    if (!unit.bannerLost && unit.cohesion < 0.25 && unit.pressure > 0.46 && rand() < dt * 0.045) {
+      unit.bannerLost = true;
+      unit.bannerLostTimer = randRange(4.5, 9.5);
+      unit.orderVersion++;
+      for (const sid of unit.soldiers) {
+        const s = soldiers[sid];
+        if (s.alive && !s.incapacitated) s.fear += randRange(0.08, 0.22);
+      }
+      showToast((unit.side === SIDE_BLUE ? 'Blue' : 'Red') + ' standard lost temporarily! Cohesion and morale suffer.');
+    }
+  }
+}
+
+function updateUnitMetrics(unit, force = false) {
+  let alive = 0, routed = 0, incap = 0, fear = 0, fatigue = 0, injury = 0, slotError = 0, pressure = 0, visibleEnemies = 0;
+  let sample = 0;
+  for (const sid of unit.soldiers) {
+    const s = soldiers[sid];
+    if (!s.alive) { incap++; continue; }
+    if (s.incapacitated) { incap++; continue; }
+    alive++;
+    if (s.state === 'ROUTING' || s.state === 'PANICKING') routed++;
+    fear += s.fear;
+    fatigue += s.fatigue;
+    injury += s.injury;
+    pressure += s.pressure;
+    visibleEnemies += s.localEnemies;
+    if ((sid + Math.floor(battleTime * 10)) % 3 === 0 || force) {
+      const slot = soldierSlot(s, unit, s.memBannerX, s.memBannerY, s.memFacing);
+      const e = Math.sqrt(dist2(s.x, s.y, slot.x, slot.y));
+      slotError += clamp(e / 36, 0, 1);
+      sample++;
+    }
+  }
+  unit.aliveCount = alive;
+  unit.routedCount = routed;
+  unit.incapacitatedCount = incap;
+  unit.casualties = unit.soldiers.length - alive;
+  unit.avgFear = alive ? fear / alive : 1;
+  unit.avgFatigue = alive ? fatigue / alive : 1;
+  unit.avgInjury = alive ? injury / alive : 1;
+  const formationError = sample ? slotError / sample : 1;
+  const routPenalty = alive ? routed / alive : 1;
+  const leaderBonus = (unit.officerAlive ? 0.07 : -0.08) + (unit.bannerLost ? -0.16 : 0.03);
+  unit.cohesion = clamp(1 - formationError * 0.82 - routPenalty * 0.95 - unit.avgFear * 0.18 + leaderBonus, 0, 1);
+  unit.pressure = alive ? clamp(pressure / alive, 0, 1) : 1;
+  unit.visibleEnemies = alive ? visibleEnemies / alive : 0;
+  if (!unit.broken && alive < unit.soldiers.length * 0.18) {
+    unit.broken = true;
+    for (const sid of unit.soldiers) {
+      const s = soldiers[sid];
+      if (s.alive && !s.incapacitated) {
+        s.state = 'ROUTING';
+        s.fear = Math.max(s.fear, 1.05);
+      }
+    }
+  }
+}
+
+// ------------------------------------------------------------
+// Simulation: individual soldier layer
+// ------------------------------------------------------------
+function updateSoldiers(dt) {
+  for (const s of soldiers) {
+    if (!s.alive) continue;
+    if (s.incapacitated) {
+      updateIncapacitated(s, dt);
+      continue;
+    }
+
+    const unit = units[s.unitId];
+    s.timeInState += dt;
+    s.attackCd -= dt;
+    s.throwCd -= dt;
+    if (s.stun > 0) s.stun -= dt;
+    if (s.pain > 0) s.pain = Math.max(0, s.pain - dt * 0.055);
+    if (s.bleeding > 0) {
+      s.injury += s.bleeding * dt * 0.012;
+      s.fear += s.bleeding * dt * 0.007;
+    }
+
+    const collapseAt = s.collapseAt || 1.06;
+    if (s.injury > collapseAt || (s.injury > collapseAt * 0.84 && rand() < dt * 0.014 * (1.25 - (s.toughness || 0.5)))) {
+      incapacitate(s, rand() < 0.16 || s.injury > collapseAt * 1.10);
+      continue;
+    }
+
+    perceive(s, dt);
+    receiveOrdersAndUpdateMemory(s, unit, dt);
+    updateFearAndState(s, unit, dt);
+
+    let desired = chooseMovement(s, unit, dt);
+    integrateSoldier(s, desired.x, desired.y, desired.maxSpeed, dt);
+
+    if (s.state !== 'ROUTING' && s.state !== 'PANICKING') {
+      maybeThrowJavelin(s, dt);
+      maybeMeleeAttack(s, dt);
+    }
+  }
+}
+
+function updateIncapacitated(s, dt) {
+  s.vx *= Math.pow(0.25, dt);
+  s.vy *= Math.pow(0.25, dt);
+  s.x += s.vx * dt;
+  s.y += s.vy * dt;
+  s.fear = Math.min(1.2, s.fear + dt * 0.005);
+  if (s.bleeding > 0 && rand() < dt * 0.03 * s.bleeding) {
+    s.alive = false;
+  }
+}
+
+function perceive(s, dt) {
+  s.localFriends = 0;
+  s.localEnemies = 0;
+  s.localRouters = 0;
+  s.nearestEnemy = -1;
+  s.nearestEnemyD2 = 999999;
+  s.nearestFriend = -1;
+  let nearestFriendD2 = 999999;
+  let pressure = 0;
+
+  const ids = nearbyIds(s.x, s.y, 2);
+  for (let k = 0; k < ids.length; k++) {
+    const o = soldiers[ids[k]];
+    if (!o || o.id === s.id || !o.alive || o.incapacitated) continue;
+    const dx = o.x - s.x;
+    const dy = o.y - s.y;
+    const d2v = dx*dx + dy*dy;
+    if (d2v > (PERCEPTION_RANGE * s.vision) * (PERCEPTION_RANGE * s.vision)) continue;
+    if (o.side === s.side) {
+      if (d2v < 28 * 28) s.localFriends++;
+      if (o.state === 'ROUTING' || o.state === 'PANICKING') s.localRouters++;
+      if (d2v < nearestFriendD2) { nearestFriendD2 = d2v; s.nearestFriend = o.id; }
+    } else {
+      if (d2v < 40 * 40) s.localEnemies++;
+      if (d2v < s.nearestEnemyD2) { s.nearestEnemyD2 = d2v; s.nearestEnemy = o.id; }
+    }
+    const minD = s.radius + o.radius + 1.2;
+    if (d2v < minD * minD) {
+      pressure += 1 - Math.sqrt(d2v) / minD;
+    }
+  }
+  s.pressure = clamp(pressure * 0.32, 0, 1);
+}
+
+function receiveOrdersAndUpdateMemory(s, unit, dt) {
+  const bd = hypot(s.x - unit.bannerX, s.y - unit.bannerY);
+  const op = officerPos(unit);
+  const od = hypot(s.x - op.x, s.y - op.y);
+  const canSeeBanner = !unit.bannerLost && bd < BANNER_VIS_RANGE * (0.72 + s.reaction * 0.28) * s.vision;
+  const canHearOfficer = unit.officerAlive && od < ORDER_SHOUT_RANGE * (0.65 + s.reaction * 0.35) * s.hearing;
+
+  if (canSeeBanner) {
+    const visibility = 1 - bd / BANNER_VIS_RANGE;
+    const memRate = (0.7 + visibility * 2.2 + s.formationSkill) * dt;
+    s.memBannerX = lerp(s.memBannerX, unit.bannerX, clamp(memRate, 0, 1));
+    s.memBannerY = lerp(s.memBannerY, unit.bannerY, clamp(memRate, 0, 1));
+    s.memFacing = angleLerp(s.memFacing, unit.facing, clamp(memRate * 0.8, 0, 1));
+    s.lastSawBanner = battleTime;
+  } else {
+    // Dead reckoning and neighbor-following. Separated men keep stale memory.
+    const staleness = clamp((battleTime - s.lastSawBanner) / 20, 0, 1);
+    if (s.nearestFriend >= 0 && staleness < 0.75) {
+      const f = soldiers[s.nearestFriend];
+      if (f.unitId === s.unitId && f.knownOrderVersion >= s.knownOrderVersion) {
+        s.memBannerX = lerp(s.memBannerX, f.memBannerX, dt * 0.18);
+        s.memBannerY = lerp(s.memBannerY, f.memBannerY, dt * 0.18);
+        s.memFacing = angleLerp(s.memFacing, f.memFacing, dt * 0.18);
+      }
+    }
+  }
+
+  if (unit.orderVersion > s.knownOrderVersion) {
+    let chance = 0;
+    if (canHearOfficer) chance += (1 - od / ORDER_SHOUT_RANGE) * (unit.officerAlive ? 2.2 : 0.3);
+    if (canSeeBanner) chance += (1 - bd / BANNER_VIS_RANGE) * 0.9;
+    if (s.nearestFriend >= 0) {
+      const f = soldiers[s.nearestFriend];
+      if (f.unitId === s.unitId && f.knownOrderVersion === unit.orderVersion) chance += 0.32;
+    }
+    chance *= 0.35 + s.discipline * 0.45 + s.reaction * 0.4;
+    chance *= unit.bannerLost ? 0.45 : 1;
+    chance *= unit.officerAlive ? 1 : 0.45;
+    if (rand() < chance * dt) {
+      s.knownOrderVersion = unit.orderVersion;
+      const lt = liveOrderTarget(unit);
+      s.lastOrderType = unit.order.type;
+      s.orderTargetX = lt.x;
+      s.orderTargetY = lt.y;
+      s.orderConfidence = clamp(chance / 2.2, 0.25, 1);
+    }
+  } else {
+    s.orderConfidence = clamp(s.orderConfidence + dt * 0.015, 0, 1);
+    if (unit.order.standing && (canSeeBanner || canHearOfficer)) {
+      // A standing order does not need a new command packet every second;
+      // men update the living target by watching the banner/officer continue the same intent.
+      const lt = liveOrderTarget(unit);
+      const learnRate = (canHearOfficer ? 0.8 : 0.25) + (canSeeBanner ? 0.45 : 0);
+      s.orderTargetX = lerp(s.orderTargetX, lt.x, clamp(dt * learnRate, 0, 1));
+      s.orderTargetY = lerp(s.orderTargetY, lt.y, clamp(dt * learnRate, 0, 1));
+    }
+  }
+}
+
+
+function aggressivePersonalIntent(s) {
+  return s.lastOrderType === 'ATTACK' || s.lastOrderType === 'ADVANCE';
+}
+
+function updateFearAndState(s, unit, dt) {
+  const bd = hypot(s.x - unit.bannerX, s.y - unit.bannerY);
+  const bannerVisible = !unit.bannerLost && bd < BANNER_VIS_RANGE;
+  const od = unit.officerAlive ? hypot(s.x - officerPos(unit).x, s.y - officerPos(unit).y) : 999;
+  const officerVisible = unit.officerAlive && od < ORDER_SHOUT_RANGE;
+  const enemyRatio = s.localEnemies / Math.max(2, s.localFriends + 1);
+  const isolation = (s.localFriends < 2 ? 0.16 : 0) + (bd > 115 ? clamp((bd - 115) / 220, 0, 0.24) : 0);
+  const casualtyRate = unit.casualties / Math.max(1, unit.soldiers.length);
+  const leaderLoss = (unit.officerAlive ? 0 : 0.13) + (unit.bannerLost ? 0.19 : 0);
+  const contactShock = s.nearestEnemyD2 < COMBAT_RANGE * COMBAT_RANGE ? 0.10 : 0;
+  const surrounded = s.localEnemies > s.localFriends + 3 ? 0.10 : 0;
+  const routers = clamp(s.localRouters * 0.025, 0, 0.18);
+  const support = (bannerVisible ? 0.08 + s.discipline * 0.08 : 0) + (officerVisible ? 0.06 + s.discipline * 0.08 : 0) + clamp(s.localFriends * 0.012, 0, 0.08);
+  const formationComfort = unit.cohesion * (0.07 + s.formationSkill * 0.06);
+  let targetFear = 0.08 + (s.moraleBias || 0) + enemyRatio * 0.19 + s.injury * 0.33 + s.pain * 0.12 + s.fatigue * 0.17 + s.longFatigue * 0.13 + isolation + casualtyRate * 0.28 + leaderLoss + contactShock + surrounded + routers - support - formationComfort - s.courage * 0.05 - (s.moraleBase || 0);
+  if (s.lastOrderType === 'WITHDRAW') targetFear -= 0.06; // ordered withdrawal feels less like panic.
+  if (s.lastOrderType === 'RALLY') targetFear -= 0.08;
+  targetFear = clamp(targetFear / Math.max(0.72, 0.82 + (s.toughness || 0.5) * 0.28 + s.courage * 0.12), 0, 1.18);
+
+  // Fear rises fast and decays slowly.
+  const rate = targetFear > s.fear ? 1.35 : 0.32;
+  s.fear += (targetFear - s.fear) * clamp(dt * rate, 0, 1);
+
+  // Panic is hysteretic: fear must stay high long enough.
+  if (s.state !== 'ROUTING') {
+    if (s.fear > s.panicThreshold || (s.fear > 0.88 && unit.cohesion < 0.26)) {
+      s.fearTimer += dt;
+      if (s.fearTimer > 1.2 + s.discipline * 2.0) {
+        setState(s, 'PANICKING');
+      }
+    } else {
+      s.fearTimer = Math.max(0, s.fearTimer - dt * 1.3);
+    }
+  }
+
+  if (s.state === 'PANICKING' && s.timeInState > randRange(0.45, 1.2)) {
+    setState(s, 'ROUTING');
+  }
+
+  // Rallying is possible but difficult and local.
+  if (s.state === 'ROUTING') {
+    const rearGood = s.side === SIDE_BLUE ? s.y > unit.bannerY + 35 : s.y < unit.bannerY - 35;
+    const rallyChance = (unit.officerAlive ? 0.16 : 0.04) + (bannerVisible ? 0.13 : 0.02) + s.discipline * 0.10;
+    if (rearGood && s.fear < s.panicThreshold - 0.20 && rand() < rallyChance * dt) {
+      setState(s, 'SEEKING_BANNER');
+      s.fear *= 0.72;
+      s.orderConfidence *= 0.55;
+    }
+  }
+
+  const mayCloseWithEnemy = canOffensivelyEngage(s, unit);
+  const enemyInsideRearRank = s.nearestEnemyD2 < (COMBAT_RANGE * 0.72) * (COMBAT_RANGE * 0.72);
+  const frontContactRange = CONTACT_TRIGGER_RANGE * (aggressivePersonalIntent(s) ? 1.10 : 0.92);
+  // Contact is a band, not a single pixel threshold. Front-rank men should start
+  // pressing while still a step short of weapon range; rear ranks still wait for
+  // a genuine gap or an enemy physically entering their file.
+  if (s.state !== 'ROUTING' && s.state !== 'PANICKING' && s.nearestEnemy >= 0 && (
+      (mayCloseWithEnemy && s.nearestEnemyD2 < frontContactRange * frontContactRange) || enemyInsideRearRank)) {
+    setState(s, 'ENGAGED');
+  } else if (s.state === 'ENGAGED' && (s.nearestEnemy < 0 ||
+      (mayCloseWithEnemy && s.nearestEnemyD2 > (CONTACT_TRIGGER_RANGE * 1.85) * (CONTACT_TRIGGER_RANGE * 1.85)) ||
+      (!mayCloseWithEnemy && !enemyInsideRearRank))) {
+    setState(s, 'FORMING');
+  }
+
+  if (s.state !== 'ROUTING' && s.state !== 'PANICKING' && s.state !== 'ENGAGED') {
+    const slot = soldierSlot(s, unit, s.memBannerX, s.memBannerY, s.memFacing);
+    const slotD = hypot(s.x - slot.x, s.y - slot.y);
+    const stale = battleTime - s.lastSawBanner;
+    if ((slotD > 65 || stale > 12) && unit.cohesion < 0.52) setState(s, 'SEEKING_BANNER');
+    else if (s.state === 'SEEKING_BANNER' && slotD < 28 && stale < 6) setState(s, 'FORMING');
+  }
+}
+
+function setState(s, state) {
+  if (s.state !== state) {
+    s.state = state;
+    s.timeInState = 0;
+  }
+}
+
+function chooseMovement(s, unit, dt) {
+  const slot = soldierSlot(s, unit, s.memBannerX, s.memBannerY, s.memFacing);
+  const dxSlot = slot.x - s.x;
+  const dySlot = slot.y - s.y;
+  const dSlot = Math.sqrt(dxSlot*dxSlot + dySlot*dySlot) || 1;
+  const fx = Math.cos(s.memFacing), fy = Math.sin(s.memFacing);
+  const rx = -fy, ry = fx;
+  const ownRearY = s.side === SIDE_BLUE ? WORLD_H - 20 : 20;
+
+  const left = getNeighborSoldier(s, 'leftNeighbor');
+  const right = getNeighborSoldier(s, 'rightNeighbor');
+  const front = getNeighborSoldier(s, 'frontNeighbor');
+  const rear = getNeighborSoldier(s, 'rearNeighbor');
+  const mayCloseWithEnemy = canOffensivelyEngage(s, unit);
+  const aggressiveOrder = aggressivePersonalIntent(s);
+
+  let desiredX = 0, desiredY = 0;
+  let maxSpeed = unit.baseSpeed;
+
+  // 1) Slot obligation: a trained man wants his assigned rank/file place.
+  // In v1 this almost disappeared in melee; in v2 it remains a strong social rule.
+  let slotWeight = 1.35 + s.formationSkill * 1.95 + s.discipline * 1.25;
+  if (s.state === 'ENGAGED') slotWeight *= mayCloseWithEnemy ? 0.42 : 1.08;
+  if (s.state === 'SEEKING_BANNER') slotWeight *= 0.78;
+  if (unit.order.type === 'RALLY') slotWeight *= 1.55;
+  if (unit.bannerLost) slotWeight *= 0.48;
+
+  desiredX += dxSlot / dSlot * Math.min(dSlot, 30) * slotWeight;
+  desiredY += dySlot / dSlot * Math.min(dSlot, 30) * slotWeight;
+
+  // 2) Rank/file lane discipline. Lateral errors are corrected harder than
+  // forward/back errors, because losing the file makes the blob effect obvious.
+  const lateralError = dxSlot * rx + dySlot * ry;
+  const depthError = dxSlot * fx + dySlot * fy;
+  let laneWeight = 2.25 + s.formationSkill * 2.35 + s.discipline * 1.55;
+  let depthWeight = 1.28 + s.formationSkill * 1.55 + s.discipline * 0.85;
+  if (s.state === 'ENGAGED') {
+    // Keep the lane/file strong, but relax depth for the front rank so it can
+    // lean past its nominal slot and actually make contact.
+    laneWeight *= 1.42;
+    depthWeight *= mayCloseWithEnemy ? 0.46 : 1.45;
+  }
+  if (unit.order.type === 'RALLY' || unit.order.type === 'HOLD') {
+    laneWeight *= 1.18;
+    depthWeight *= 1.20;
+  }
+  desiredX += rx * clamp(lateralError * laneWeight, -46, 46);
+  desiredY += ry * clamp(lateralError * laneWeight, -46, 46);
+  desiredX += fx * clamp(depthError * depthWeight, -38, 38);
+  desiredY += fy * clamp(depthError * depthWeight, -38, 38);
+
+  // 3) Neighbor contracts. A soldier dresses on the men beside and ahead of him.
+  // These are springs, not teleports, so wounded/fearful individuals can still fail.
+  const neighborBase = (0.42 + s.formationSkill * 0.86 + s.discipline * 0.58) * (unit.bannerLost ? 0.62 : 1);
+  function addAnchor(o, ax, ay, w, limit) {
+    if (!isSteadySoldier(o) || o.unitId !== s.unitId) return;
+    const ex = ax - s.x, ey = ay - s.y;
+    desiredX += clamp(ex * w, -limit, limit);
+    desiredY += clamp(ey * w, -limit, limit);
+  }
+  if (left) addAnchor(left, left.x + rx * unit.spacing, left.y + ry * unit.spacing, neighborBase * 0.90, 22);
+  if (right) addAnchor(right, right.x - rx * unit.spacing, right.y - ry * unit.spacing, neighborBase * 0.90, 22);
+  if (front) addAnchor(front, front.x - fx * unit.spacing, front.y - fy * unit.spacing, neighborBase * (s.state === 'ENGAGED' ? 1.18 : 1.00), 28);
+  if (rear) addAnchor(rear, rear.x + fx * unit.spacing, rear.y + fy * unit.spacing, neighborBase * 0.35, 14);
+
+  // Explicit no-overtaking rule for rear ranks. This is the most important
+  // anti-blob rule: men behind the fighting line do not voluntarily pass through it.
+  if (isSteadySoldier(front) && front.unitId === s.unitId) {
+    const relFront = (s.x - front.x) * fx + (s.y - front.y) * fy;
+    const desiredRel = -unit.spacing;
+    if (relFront > -unit.spacing * 0.42 || (!mayCloseWithEnemy && aggressiveOrder)) {
+      const correction = clamp((desiredRel - relFront) * (4.5 + s.discipline * 3.8), -56, 24);
+      desiredX += fx * correction;
+      desiredY += fy * correction;
+    }
+  }
+
+  // 4) Unit order vector. Rear ranks under advance/attack receive the same order,
+  // but their interpretation is "support and preserve the file," not "find a duel."
+  const orderKnown = s.knownOrderVersion === unit.orderVersion;
+  const orderLag = orderKnown ? 1 : 0.22;
+  if (s.lastOrderType === 'MOVE' || s.lastOrderType === 'ATTACK' || s.lastOrderType === 'ADVANCE' || s.lastOrderType === 'SKIRMISH' || s.lastOrderType === 'WITHDRAW' || s.lastOrderType === 'RALLY') {
+    const odx = s.orderTargetX - s.x;
+    const ody = s.orderTargetY - s.y;
+    const od = Math.sqrt(odx*odx + ody*ody) || 1;
+    let ow = (0.15 + s.discipline * 0.24) * orderLag * s.orderConfidence;
+    if (s.lastOrderType === 'WITHDRAW') ow *= 2.1;
+    if (s.lastOrderType === 'RALLY') ow *= 0.75;
+    if (aggressiveOrder && !mayCloseWithEnemy) ow *= 0.18;
+    if (s.state === 'ENGAGED') ow *= mayCloseWithEnemy ? 0.34 : 0.12;
+    desiredX += odx / od * Math.min(od, 36) * ow;
+    desiredY += ody / od * Math.min(od, 36) * ow;
+  }
+
+  // Separation and crowd pressure. This prevents physical overlap but is weaker
+  // than rank/file rules for friends, so it does not explode the formation sideways.
+  const ids = nearbyIds(s.x, s.y, 1);
+  for (let k = 0; k < ids.length; k++) {
+    const o = soldiers[ids[k]];
+    if (!o || o.id === s.id || !o.alive || o.incapacitated) continue;
+    const dx = s.x - o.x, dy = s.y - o.y;
+    const d2v = dx*dx + dy*dy;
+    const minD = s.radius + o.radius + (o.side === s.side ? 1.0 : 2.1);
+    if (d2v < minD * minD && d2v > 0.0001) {
+      const d = Math.sqrt(d2v);
+      const push = (minD - d) / minD;
+      const sideFactor = o.side === s.side ? 0.82 : 1.45;
+      desiredX += dx / d * push * 52 * sideFactor;
+      desiredY += dy / d * push * 52 * sideFactor;
+    }
+  }
+
+  // Enemy proximity behavior.
+  if (s.nearestEnemy >= 0) {
+    const e = soldiers[s.nearestEnemy];
+    const dx = e.x - s.x, dy = e.y - s.y;
+    const d = Math.sqrt(dx*dx + dy*dy) || 1;
+    const nx = dx / d, ny = dy / d;
+
+    if (s.type === 'skirmisher' && s.state !== 'ENGAGED') {
+      const desiredRange = s.ammo > 0 ? 62 : 88;
+      if (d < desiredRange) {
+        desiredX -= nx * (desiredRange - d) * 1.6;
+        desiredY -= ny * (desiredRange - d) * 1.6;
+        maxSpeed *= 1.15;
+      } else if (d > desiredRange + 18 && s.ammo > 0) {
+        desiredX += nx * 14;
+        desiredY += ny * 14;
+      }
+    } else if (s.state === 'ENGAGED') {
+      if (mayCloseWithEnemy || d < COMBAT_RANGE * 0.72) {
+        // Elastic contact: the front rank preserves its lateral lane but is
+        // allowed to step/lean forward through a short engagement band. This
+        // fixes the v2.1 stare-off without telling rear ranks to blob forward.
+        const ideal = SOLDIER_R * 2.05 + 0.9;
+        const diff = d - ideal;
+        const press = d > MELEE_ATTACK_RANGE ? 6.9 : 4.6;
+        desiredX += nx * clamp(diff, -8, 13) * press;
+        desiredY += ny * clamp(diff, -8, 13) * press;
+        if (aggressiveOrder && d > COMBAT_RANGE * 0.88) {
+          const lunge = clamp((d - COMBAT_RANGE * 0.72) / Math.max(1, CONTACT_TRIGGER_RANGE - COMBAT_RANGE * 0.72), 0, 1);
+          desiredX += nx * (10 + s.aggression * 10) * lunge;
+          desiredY += ny * (10 + s.aggression * 10) * lunge;
+        }
+        maxSpeed *= 0.62;
+      } else {
+        // Rear-rank contact posture: face the threat and brace, but do not chase around the line.
+        const keepBack = unit.spacing * 1.45;
+        if (d < keepBack) {
+          desiredX -= nx * (keepBack - d) * 1.35;
+          desiredY -= ny * (keepBack - d) * 1.35;
+        }
+        maxSpeed *= 0.44;
+      }
+      s.facing = angleLerp(s.facing, Math.atan2(dy, dx), dt * 5.5);
+    } else if (aggressiveOrder) {
+      if (mayCloseWithEnemy) {
+        // Before formal melee state, close the last step instead of waiting
+        // exactly on the banner-derived slot.
+        const closeBias = 8.0 + clamp(d - CONTACT_STANDOFF, 0, CONTACT_TRIGGER_RANGE) * 1.25;
+        desiredX += nx * closeBias;
+        desiredY += ny * closeBias;
+      } else {
+        // The file advances by following the front rank, not by every man choosing a victim.
+        desiredX += fx * 2.0;
+        desiredY += fy * 2.0;
+      }
+    }
+  }
+
+  // Routing / panic overrides ordinary obedience.
+  if (s.state === 'PANICKING' || s.state === 'ROUTING') {
+    let rx2 = 0;
+    let ry2 = s.side === SIDE_BLUE ? 1 : -1;
+    if (s.nearestEnemy >= 0) {
+      const e = soldiers[s.nearestEnemy];
+      const away = normalize(s.x - e.x, s.y - e.y);
+      rx2 += away[0] * 1.2;
+      ry2 += away[1] * 1.2;
+    }
+    rx2 += randRange(-0.22, 0.22);
+    ry2 += (ownRearY - s.y) / WORLD_H * 0.55;
+    const n = normalize(rx2, ry2);
+    desiredX = n[0] * 95;
+    desiredY = n[1] * 95;
+    maxSpeed = unit.baseSpeed * 1.32;
+    s.facing = angleLerp(s.facing, Math.atan2(desiredY, desiredX), dt * 6.0);
+  } else if (s.state === 'SEEKING_BANNER') {
+    const bd = hypot(unit.bannerX - s.x, unit.bannerY - s.y) || 1;
+    let seekX = (unit.bannerLost ? s.memBannerX : unit.bannerX) - s.x;
+    let seekY = (unit.bannerLost ? s.memBannerY : unit.bannerY) - s.y;
+    const n = normalize(seekX, seekY);
+    desiredX += n[0] * 28 * (0.8 + s.discipline);
+    desiredY += n[1] * 28 * (0.8 + s.discipline);
+    maxSpeed *= bd > 100 ? 1.07 : 0.9;
+  }
+
+  // Fatigue, injury, fear, pressure affect the body, not just morale.
+  const mobility = (1 - s.fatigue * 0.34) * (1 - s.longFatigue * 0.18) * (1 - s.injury * 0.45) * (1 - s.pain * 0.13) * (1 - s.pressure * 0.12);
+  maxSpeed *= clamp(mobility, 0.22, 1.05);
+  if (s.stun > 0) maxSpeed *= 0.18;
+
+  // Face the battle line rather than every little lateral correction. This keeps
+  // ranks visually coherent while still allowing routers and skirmishers to turn.
+  if (s.state !== 'ENGAGED') {
+    const md = Math.sqrt(desiredX*desiredX + desiredY*desiredY);
+    const shouldFaceTravel = s.lastOrderType === 'WITHDRAW' || s.state === 'SEEKING_BANNER' || (s.type === 'skirmisher' && s.lastOrderType === 'SKIRMISH');
+    if (md > 1.5 && shouldFaceTravel) s.facing = angleLerp(s.facing, Math.atan2(desiredY, desiredX), dt * (1.1 + s.reaction * 1.7));
+    else if (s.nearestEnemy >= 0 && (aggressiveOrder || s.lastOrderType === 'HOLD')) {
+      const e = soldiers[s.nearestEnemy];
+      s.facing = angleLerp(s.facing, Math.atan2(e.y - s.y, e.x - s.x), dt * (0.8 + s.reaction * 1.2));
+    } else {
+      s.facing = angleLerp(s.facing, s.memFacing, dt * (0.8 + s.formationSkill));
+    }
+  }
+
+  return { x: desiredX, y: desiredY, maxSpeed };
+}
+
+function integrateSoldier(s, desiredX, desiredY, maxSpeed, dt) {
+  const d = Math.sqrt(desiredX*desiredX + desiredY*desiredY);
+  let dvx = 0, dvy = 0;
+  if (d > 0.001) {
+    const speed = Math.min(maxSpeed, d);
+    dvx = desiredX / d * speed;
+    dvy = desiredY / d * speed;
+  }
+  const accel = (s.stun > 0 ? 2.5 : 7.0) * (0.55 + s.reaction * 0.45) / Math.sqrt(s.bodyMass || 1);
+  s.vx = lerp(s.vx, dvx + s.combatImpulseX, clamp(dt * accel, 0, 1));
+  s.vy = lerp(s.vy, dvy + s.combatImpulseY, clamp(dt * accel, 0, 1));
+  s.combatImpulseX *= Math.pow(0.02, dt);
+  s.combatImpulseY *= Math.pow(0.02, dt);
+
+  s.x += s.vx * dt;
+  s.y += s.vy * dt;
+  s.x = clamp(s.x, 4, WORLD_W - 4);
+  s.y = clamp(s.y, 4, WORLD_H - 4);
+
+  const speedNow = Math.sqrt(s.vx*s.vx + s.vy*s.vy);
+  const effort = clamp(speedNow / Math.max(1, maxSpeed), 0, 1.4);
+  const combatLoad = s.state === 'ENGAGED' ? 0.065 : 0;
+  const panicLoad = s.state === 'ROUTING' || s.state === 'PANICKING' ? 0.072 : 0;
+  const rest = effort < 0.22 && s.state !== 'ENGAGED' ? 0.038 : 0;
+  s.fatigue += dt * (((effort * effort * 0.050 + combatLoad + panicLoad + s.pressure * 0.025) * Math.sqrt(s.bodyMass || 1)) / Math.max(0.35, s.endurance) - rest);
+  s.fatigue = clamp(s.fatigue, 0, 1.1);
+  s.longFatigue += dt * Math.max(0, s.fatigue - 0.42) * 0.009;
+  s.longFatigue = clamp(s.longFatigue, 0, 1);
+}
+
+function maybeThrowJavelin(s, dt) {
+  if (s.type !== 'skirmisher' || s.ammo <= 0 || s.throwCd > 0 || s.nearestEnemy < 0) return;
+  const e = soldiers[s.nearestEnemy];
+  if (!e || !e.alive || e.incapacitated) return;
+  const dx = e.x - s.x, dy = e.y - s.y;
+  const d = Math.sqrt(dx*dx + dy*dy);
+  if (d < 26 || d > 82) return;
+  const facingError = Math.abs(normAngle(Math.atan2(dy, dx) - s.facing));
+  if (facingError > Math.PI * 0.55) return;
+  const unit = units[s.unitId];
+  if (unit.order.type !== 'SKIRMISH' && unit.order.type !== 'ATTACK' && unit.order.type !== 'ADVANCE') return;
+
+  s.ammo--;
+  s.throwCd = randRange(3.2, 6.4) + s.fatigue * 2.5;
+  s.fatigue = clamp(s.fatigue + 0.025, 0, 1.1);
+  projectiles.push({
+    x: s.x, y: s.y,
+    tx: e.x + e.vx * 0.25 + randRange(-5, 5),
+    ty: e.y + e.vy * 0.25 + randRange(-5, 5),
+    t: 0, dur: clamp(d / 145, 0.18, 0.7),
+    side: s.side,
+    attacker: s.id,
+    target: e.id
+  });
+}
+
+function updateProjectiles(dt) {
+  for (let i = projectiles.length - 1; i >= 0; i--) {
+    const p = projectiles[i];
+    p.t += dt;
+    if (p.t >= p.dur) {
+      resolveJavelin(p);
+      projectiles.splice(i, 1);
+    }
+  }
+}
+
+function resolveJavelin(p) {
+  const target = soldiers[p.target];
+  const attacker = soldiers[p.attacker];
+  if (!target || !attacker || !target.alive || target.incapacitated || attacker.side === target.side) return;
+  const d = hypot(target.x - p.tx, target.y - p.ty);
+  const facingToAttacker = Math.atan2(attacker.y - target.y, attacker.x - target.x);
+  const shieldFacing = Math.abs(normAngle(facingToAttacker - target.facing));
+  const shieldBonus = shieldFacing < Math.PI * 0.62 ? target.shieldSkill * 0.42 : -0.18;
+  const attack = randRange(0.15, 1.05) + attacker.weaponSkill * 0.42 - attacker.fatigue * 0.12 - d / 18;
+  const defense = randRange(0.10, 0.9) + shieldBonus + target.formationSkill * 0.10 - target.fatigue * 0.10;
+  const margin = attack - defense;
+  if (margin > 0.38) {
+    wound(target, attacker, randRange(0.05, 0.23) + margin * 0.12, 0.10 + margin * 0.08);
+    target.stun = Math.max(target.stun, randRange(0.05, 0.22));
+  } else {
+    target.fear = clamp(target.fear + randRange(0.01, 0.04), 0, 1.2);
+    target.fatigue = clamp(target.fatigue + 0.006, 0, 1.1);
+  }
+}
+
+function maybeMeleeAttack(s, dt) {
+  if (s.nearestEnemy < 0 || s.nearestEnemyD2 > MELEE_ATTACK_RANGE * MELEE_ATTACK_RANGE || s.attackCd > 0 || s.stun > 0) return;
+  const unit = units[s.unitId];
+  // Rear-rank men do not start duels through their own front rank unless a gap opens.
+  // They still defend themselves if an enemy is physically on top of them.
+  if (!canOffensivelyEngage(s, unit) && s.nearestEnemyD2 > (COMBAT_RANGE * 0.58) * (COMBAT_RANGE * 0.58)) return;
+  const e = soldiers[s.nearestEnemy];
+  if (!e || !e.alive || e.incapacitated || e.side === s.side) return;
+  const dx = e.x - s.x, dy = e.y - s.y;
+  const d = Math.sqrt(dx*dx + dy*dy) || 1;
+  const lungePenalty = d > COMBAT_RANGE ? (d - COMBAT_RANGE) / Math.max(1, MELEE_ATTACK_RANGE - COMBAT_RANGE) * 0.18 : 0;
+  const faceErr = Math.abs(normAngle(Math.atan2(dy, dx) - s.facing));
+  if (faceErr > Math.PI * 0.72 && rand() > 0.15) return;
+
+  const supportA = clamp(s.localFriends * 0.035, 0, 0.22);
+  const supportD = clamp(e.localFriends * 0.035, 0, 0.22);
+  const flank = Math.abs(normAngle(Math.atan2(s.y - e.y, s.x - e.x) - e.facing)) > Math.PI * 0.67 ? 0.26 : 0;
+  const crowdPenalty = s.pressure * 0.16;
+  const attack = randRange(0.0, 1.0) + s.weaponSkill * 0.75 + s.aggression * 0.12 + supportA + flank - s.fatigue * 0.30 - s.injury * 0.42 - s.fear * 0.12 - crowdPenalty - lungePenalty;
+  const defense = randRange(0.0, 1.0) + e.shieldSkill * 0.72 + e.weaponSkill * 0.18 + supportD - e.fatigue * 0.22 - e.injury * 0.34 - e.fear * 0.08 - flank * 0.8;
+  const margin = attack - defense;
+
+  s.attackCd = randRange(0.80, 1.55) + s.fatigue * 0.75 + s.injury * 0.7;
+  s.fatigue = clamp(s.fatigue + randRange(0.018, 0.042), 0, 1.1);
+
+  const nx = dx / d, ny = dy / d;
+  if (margin > 0.78) {
+    wound(e, s, randRange(0.22, 0.46) + margin * 0.11, 0.18 + margin * 0.10);
+    e.stun = Math.max(e.stun, randRange(0.18, 0.62));
+    e.combatImpulseX += nx * randRange(10, 26);
+    e.combatImpulseY += ny * randRange(10, 26);
+    s.killCount += e.incapacitated ? 1 : 0;
+  } else if (margin > 0.23) {
+    wound(e, s, randRange(0.04, 0.16) + margin * 0.05, 0.06 + margin * 0.05);
+    e.combatImpulseX += nx * randRange(4, 13);
+    e.combatImpulseY += ny * randRange(4, 13);
+  } else if (margin < -0.55 && rand() < 0.35) {
+    // Counter pressure: a missed attack may expose the attacker.
+    wound(s, e, randRange(0.015, 0.075), 0.04);
+    s.combatImpulseX -= nx * randRange(4, 13);
+    s.combatImpulseY -= ny * randRange(4, 13);
+  } else {
+    // Shield contact, hesitation, pushing, no clean wound.
+    e.fatigue = clamp(e.fatigue + randRange(0.004, 0.016), 0, 1.1);
+    e.fear = clamp(e.fear + randRange(0.004, 0.018), 0, 1.2);
+    s.combatImpulseX -= nx * randRange(1, 4);
+    s.combatImpulseY -= ny * randRange(1, 4);
+    e.combatImpulseX += nx * randRange(1, 4);
+    e.combatImpulseY += ny * randRange(1, 4);
+  }
+}
+
+function wound(target, attacker, amount, pain) {
+  if (!target.alive || target.incapacitated) return;
+  const resilience = target.constitution || 1;
+  const painTol = target.painTolerance || 1;
+  const adjustedAmount = amount / resilience;
+  const adjustedPain = pain / painTol;
+  target.injury = clamp(target.injury + adjustedAmount, 0, 1.35);
+  target.pain = clamp(target.pain + adjustedPain, 0, 1.1);
+  target.fear = clamp(target.fear + adjustedPain * 0.25 + adjustedAmount * 0.18, 0, 1.22);
+  target.bleeding = clamp(target.bleeding + adjustedAmount * randRange(0.03, 0.14), 0, 1);
+  target.lastHitBy = attacker ? attacker.id : -1;
+  const collapse = target.collapseThreshold || 1.03;
+  if (target.injury > collapse * 0.70 && rand() < adjustedAmount * 0.18) {
+    target.stun = Math.max(target.stun, randRange(0.4, 1.4));
+  }
+  if (target.injury > collapse * 0.90 && rand() < adjustedAmount * 0.45) {
+    incapacitate(target, rand() < 0.23);
+    if (attacker) attacker.killCount++;
+  }
+}
+
+function incapacitate(s, dead = false) {
+  s.incapacitated = true;
+  s.alive = !dead;
+  s.state = dead ? 'DEAD' : 'INCAPACITATED';
+  s.timeInState = 0;
+  s.fear = 1.2;
+  s.vx *= 0.2;
+  s.vy *= 0.2;
+  const unit = units[s.unitId];
+  if (unit) {
+    // Nearby comrades react to seeing someone go down.
+    const ids = nearbyIds(s.x, s.y, 1);
+    for (const id of ids) {
+      const o = soldiers[id];
+      if (o && o.side === s.side && o.alive && !o.incapacitated) {
+        o.fear = clamp(o.fear + randRange(0.015, 0.055), 0, 1.2);
+      }
+    }
+  }
+}
+
+// ------------------------------------------------------------
+// Enemy AI
+// ------------------------------------------------------------
+function updateEnemyAI(dt) {
+  aiTimer -= dt;
+  if (aiTimer > 0) return;
+  aiTimer = 1.0;
+
+  const redUnits = units.filter(u => u.side === SIDE_RED && u.aliveCount > 0 && !u.broken);
+  const blueUnits = units.filter(u => u.side === SIDE_BLUE && u.aliveCount > 0 && !u.broken);
+  if (!redUnits.length || !blueUnits.length) return;
+
+  const blueLineCenter = averageUnitPos(blueUnits);
+  const redAliveFrac = totalAlive(SIDE_RED) / Math.max(1, totalInitial(SIDE_RED));
+  const blueWeak = blueUnits.slice().sort((a, b) => weaknessScore(b) - weaknessScore(a));
+
+  for (const u of redUnits) {
+    const nearest = nearestEnemyUnit(u);
+    const weak = weakestEnemyUnitSeenBy(u) || blueWeak[0] || nearest;
+    if (!nearest) continue;
+
+    if (u.type === 'skirmisher') {
+      const target = nearest.type === 'skirmisher' ? nearest : weak;
+      const offset = u.index - 2;
+      let tx = target.bannerX + offset * 8;
+      let ty = target.bannerY - 70; // stay north of blue target
+      if (hypot(u.bannerX - target.bannerX, u.bannerY - target.bannerY) < 80) {
+        tx = u.bannerX + (u.bannerX - target.bannerX) * 0.7;
+        ty = u.bannerY + (u.bannerY - target.bannerY) * 0.7;
+      }
+      issueOrder(u, 'SKIRMISH', tx, ty, 0.65, { standing: true, trackTargetId: target ? target.id : -1 });
+    } else if (u.type === 'reserve') {
+      const commit = battleTime > 40 || redAliveFrac < 0.72 || blueWeak[0].cohesion < 0.42 || nearest.bannerY < 250;
+      if (!commit) {
+        issueOrder(u, 'HOLD', u.initialX, u.initialY, 0.25);
+      } else {
+        const target = preferredAttackTarget(u) || blueWeak[0] || nearest;
+        { const p = standingTargetPoint(u, target, 'ATTACK'); issueOrder(u, 'ATTACK', p.x, p.y, 0.78, { standing: true, trackTargetId: target ? target.id : -1 }); }
+      }
+    } else {
+      // Line infantry pins center; outer units try to roll flanks.
+      let target = preferredAttackTarget(u) || weak;
+      if (u.index === 0) target = leftmostFormedEnemyUnit(SIDE_BLUE) || leftmostEnemyUnit(SIDE_BLUE) || target;
+      if (u.index === 4) target = rightmostFormedEnemyUnit(SIDE_BLUE) || rightmostEnemyUnit(SIDE_BLUE) || target;
+      const flankOffset = u.index === 0 ? -42 : (u.index === 4 ? 42 : 0);
+      { const p = standingTargetPoint(u, target, 'ATTACK'); issueOrder(u, 'ATTACK', clamp(p.x + flankOffset, 40, WORLD_W - 40), p.y, 0.74, { standing: true, trackTargetId: target ? target.id : -1 }); }
+    }
+  }
+}
+
+function weaknessScore(u) {
+  return (1 - u.cohesion) * 1.5 + u.avgFear * 1.1 + u.casualties / Math.max(1, u.soldiers.length) * 1.4 + (u.officerAlive ? 0 : 0.25) + (u.bannerLost ? 0.3 : 0);
+}
+function averageUnitPos(arr) {
+  let x = 0, y = 0;
+  for (const u of arr) { x += u.bannerX; y += u.bannerY; }
+  return { x: x / arr.length, y: y / arr.length };
+}
+function totalAlive(side) {
+  let n = 0;
+  for (const u of units) if (u.side === side) n += u.aliveCount;
+  return n;
+}
+function totalInitial(side) {
+  let n = 0;
+  for (const u of units) if (u.side === side) n += u.soldiers.length;
+  return n;
+}
+function leftmostEnemyUnit(side) {
+  let best = null, bx = Infinity;
+  for (const u of units) if (u.side === side && u.aliveCount > 0 && !u.broken && u.bannerX < bx) { bx = u.bannerX; best = u; }
+  return best;
+}
+function rightmostEnemyUnit(side) {
+  let best = null, bx = -Infinity;
+  for (const u of units) if (u.side === side && u.aliveCount > 0 && !u.broken && u.bannerX > bx) { bx = u.bannerX; best = u; }
+  return best;
+}
+function leftmostFormedEnemyUnit(side) {
+  let best = null, bx = Infinity;
+  for (const u of units) if (u.side === side && u.type !== 'skirmisher' && u.aliveCount > 0 && !u.broken && u.bannerX < bx) { bx = u.bannerX; best = u; }
+  return best;
+}
+function rightmostFormedEnemyUnit(side) {
+  let best = null, bx = -Infinity;
+  for (const u of units) if (u.side === side && u.type !== 'skirmisher' && u.aliveCount > 0 && !u.broken && u.bannerX > bx) { bx = u.bannerX; best = u; }
+  return best;
+}
+
+// ------------------------------------------------------------
+// Rendering
+// ------------------------------------------------------------
+function render() {
+  ctx.save();
+  ctx.setTransform(canvas.width / WORLD_W, 0, 0, canvas.height / WORLD_H, 0, 0);
+
+  drawTerrain();
+  drawOrdersAndFormations();
+  drawProjectiles();
+  drawSoldiers();
+  drawUnits();
+  drawSelectionBox();
+  drawHUD();
+
+  ctx.restore();
+}
+
+function drawTerrain() {
+  ctx.fillStyle = '#3a382b';
+  ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+
+  // Subtle ground texture, deterministic and cheap.
+  ctx.globalAlpha = 0.18;
+  for (let i = 0; i < 90; i++) {
+    const x = (i * 157) % WORLD_W;
+    const y = (i * 83) % WORLD_H;
+    ctx.fillStyle = i % 2 ? '#2f2d22' : '#4b4735';
+    ctx.beginPath();
+    ctx.ellipse(x, y, 45 + (i % 7) * 8, 8 + (i % 5) * 3, (i % 17) * 0.3, 0, TWO_PI);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, WORLD_H / 2);
+  ctx.lineTo(WORLD_W, WORLD_H / 2);
+  ctx.stroke();
+}
+
+function drawOrdersAndFormations() {
+  for (const u of units) {
+    if (u.aliveCount <= 0) continue;
+    const selected = selectedUnits.has(u.id);
+    if (!selected && !debug) continue;
+    const alpha = selected ? 0.36 : 0.12;
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = u.side === SIDE_BLUE ? '#a7d8ff' : '#ffb2a7';
+    ctx.lineWidth = selected ? 1.4 : 0.8;
+    ctx.beginPath();
+    ctx.moveTo(u.bannerX, u.bannerY);
+    const lt = liveOrderTarget(u);
+    ctx.lineTo(lt.x, lt.y);
+    ctx.stroke();
+
+    ctx.fillStyle = u.side === SIDE_BLUE ? '#a7d8ff' : '#ffb2a7';
+    for (let r = 0; r < u.rows; r++) {
+      for (let f = 0; f < u.cols; f++) {
+        if ((f + r) % 2 && !selected) continue;
+        const p = formationSlot(u, f, r);
+        ctx.fillRect(p.x - 0.8, p.y - 0.8, 1.6, 1.6);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawSoldiers() {
+  for (const s of soldiers) {
+    const unit = units[s.unitId];
+    let alpha = 1;
+    let color;
+    if (!s.alive) {
+      color = '#4b4037';
+      alpha = 0.45;
+    } else if (s.incapacitated) {
+      color = s.side === SIDE_BLUE ? '#617387' : '#805b55';
+      alpha = 0.62;
+    } else if (s.state === 'ROUTING' || s.state === 'PANICKING') {
+      color = s.side === SIDE_BLUE ? '#b2cee6' : '#e6aaa2';
+      alpha = 0.78;
+    } else if (s.injury > 0.45) {
+      color = s.side === SIDE_BLUE ? '#7798b6' : '#bd7370';
+      alpha = 0.88;
+    } else if (s.type === 'reserve') {
+      color = s.side === SIDE_BLUE ? '#7cc0ff' : '#ff8884';
+    } else if (s.type === 'line') {
+      color = s.side === SIDE_BLUE ? '#4ea2ef' : '#ee5555';
+    } else {
+      color = s.side === SIDE_BLUE ? '#9dd6ff' : '#ffaaa0';
+    }
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.radius, 0, TWO_PI);
+    ctx.fill();
+
+    // Facing tick for living front-rank-ish soldiers in debug or selected units.
+    if (debug && s.alive && !s.incapacitated && s.id % 3 === 0) {
+      ctx.strokeStyle = s.side === SIDE_BLUE ? 'rgba(220,240,255,.5)' : 'rgba(255,220,220,.5)';
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(s.x, s.y);
+      ctx.lineTo(s.x + Math.cos(s.facing) * 5, s.y + Math.sin(s.facing) * 5);
+      ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawUnits() {
+  for (const u of units) {
+    if (u.aliveCount <= 0) continue;
+    const selected = selectedUnits.has(u.id);
+    const base = u.side === SIDE_BLUE ? '#58b4ff' : '#ff6464';
+    const accent = u.bannerLost ? '#888888' : '#f0c35a';
+    const op = officerPos(u);
+
+    // Unit cohesion ring.
+    ctx.globalAlpha = selected || debug ? 0.8 : 0.45;
+    ctx.strokeStyle = selected ? '#fff5b5' : base;
+    ctx.lineWidth = selected ? 2.2 : 1.2;
+    ctx.beginPath();
+    ctx.arc(u.bannerX, u.bannerY, 9 + (1 - u.cohesion) * 7, 0, TWO_PI);
+    ctx.stroke();
+
+    // Banner.
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = accent;
+    ctx.strokeStyle = '#211a10';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(u.bannerX, u.bannerY - 12);
+    ctx.lineTo(u.bannerX, u.bannerY + 12);
+    ctx.stroke();
+    ctx.fillRect(u.bannerX + 1, u.bannerY - 12, 10, 7);
+
+    // Officer.
+    if (u.officerAlive) {
+      ctx.fillStyle = '#ffe084';
+      ctx.beginPath();
+      ctx.arc(op.x, op.y, 4.4, 0, TWO_PI);
+      ctx.fill();
+    } else if (debug || selected) {
+      ctx.strokeStyle = '#3a3024';
+      ctx.beginPath();
+      ctx.arc(op.x, op.y, 4, 0, TWO_PI);
+      ctx.stroke();
+    }
+
+    if (selected || hoveredUnit === u.id) {
+      ctx.font = '11px system-ui, sans-serif';
+      ctx.fillStyle = '#fff4ce';
+      ctx.textAlign = 'center';
+      const txt = shortType(u) + ' ' + (u.index + 1) + ' | ' + u.order.type + (u.order.standing ? '*' : '') + ' | coh ' + Math.round(u.cohesion * 100);
+      ctx.fillText(txt, u.bannerX, u.bannerY - 18);
+    }
+
+    if (debug) drawUnitDebug(u);
+  }
+}
+
+function drawUnitDebug(u) {
+  const x = u.bannerX + 14, y = u.bannerY + 10;
+  const w = 42, h = 3;
+  ctx.globalAlpha = 0.85;
+  drawMiniBar(x, y, w, h, u.cohesion, '#91d783');
+  drawMiniBar(x, y + 5, w, h, u.avgFear, '#ffcd70');
+  drawMiniBar(x, y + 10, w, h, u.avgFatigue, '#9cc5ff');
+  ctx.globalAlpha = 1;
+}
+function drawMiniBar(x, y, w, h, value, color) {
+  ctx.fillStyle = 'rgba(0,0,0,.35)';
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, w * clamp(value, 0, 1), h);
+}
+
+function drawProjectiles() {
+  ctx.strokeStyle = 'rgba(245,226,169,.75)';
+  ctx.lineWidth = 1.1;
+  for (const p of projectiles) {
+    const t = clamp(p.t / p.dur, 0, 1);
+    const x = lerp(p.x, p.tx, t);
+    const y = lerp(p.y, p.ty, t);
+    const oldT = clamp(t - 0.08, 0, 1);
+    const ox = lerp(p.x, p.tx, oldT);
+    const oy = lerp(p.y, p.ty, oldT);
+    ctx.beginPath();
+    ctx.moveTo(ox, oy);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  }
+}
+
+function drawSelectionBox() {
+  if (!mouse.dragging || !mouse.dragStart || !mouse.dragEnd) return;
+  const x = Math.min(mouse.dragStart.x, mouse.dragEnd.x);
+  const y = Math.min(mouse.dragStart.y, mouse.dragEnd.y);
+  const w = Math.abs(mouse.dragStart.x - mouse.dragEnd.x);
+  const h = Math.abs(mouse.dragStart.y - mouse.dragEnd.y);
+  ctx.strokeStyle = 'rgba(180,220,255,.85)';
+  ctx.fillStyle = 'rgba(110,170,255,.11)';
+  ctx.lineWidth = 1.2;
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeRect(x, y, w, h);
+}
+
+function drawHUD() {
+  ctx.font = '13px system-ui, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(0,0,0,.42)';
+  ctx.fillRect(10, 10, 285, 72);
+  ctx.fillStyle = '#f5ead3';
+  ctx.fillText('Time ' + formatTime(battleTime) + (paused ? '  PAUSED' : ''), 20, 31);
+  ctx.fillText('Blue alive ' + totalAlive(SIDE_BLUE) + ' / ' + totalInitial(SIDE_BLUE), 20, 51);
+  ctx.fillText('Red alive ' + totalAlive(SIDE_RED) + ' / ' + totalInitial(SIDE_RED), 20, 70);
+
+  if (gameOver) {
+    ctx.fillStyle = 'rgba(0,0,0,.66)';
+    ctx.fillRect(WORLD_W / 2 - 220, WORLD_H / 2 - 52, 440, 104);
+    ctx.strokeStyle = '#f0c35a';
+    ctx.strokeRect(WORLD_W / 2 - 220, WORLD_H / 2 - 52, 440, 104);
+    ctx.fillStyle = '#fff4ce';
+    ctx.textAlign = 'center';
+    ctx.font = '26px system-ui, sans-serif';
+    ctx.fillText(winnerText, WORLD_W / 2, WORLD_H / 2 - 6);
+    ctx.font = '13px system-ui, sans-serif';
+    ctx.fillText('Press Reset to run the battle again.', WORLD_W / 2, WORLD_H / 2 + 26);
+  }
+}
+
+function shortType(u) {
+  if (u.type === 'skirmisher') return 'Skirm';
+  if (u.type === 'line') return 'Line';
+  return 'Reserve';
+}
+
+// ------------------------------------------------------------
+// UI and input
+// ------------------------------------------------------------
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.style.display = 'block';
+  toastTimer = 6.5;
+}
+
+function updateToast(dt) {
+  toastTimer -= dt;
+  if (toastTimer <= 0) document.getElementById('toast').style.display = 'none';
+}
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('mousemove', e => {
+  const p = screenToWorld(e);
+  mouse.x = p.x; mouse.y = p.y;
+  hoveredUnit = findNearestUnit(p.x, p.y, SIDE_BLUE, 30);
+  if (mouse.down && mouse.dragStart) {
+    mouse.dragEnd = p;
+    const d = hypot(mouse.dragEnd.x - mouse.dragStart.x, mouse.dragEnd.y - mouse.dragStart.y);
+    mouse.dragging = d > 6;
+  }
+});
+canvas.addEventListener('mousedown', e => {
+  const p = screenToWorld(e);
+  if (e.button === 0) {
+    mouse.down = true;
+    mouse.dragStart = p;
+    mouse.dragEnd = p;
+    mouse.dragging = false;
+  }
+});
+canvas.addEventListener('mouseup', e => {
+  const p = screenToWorld(e);
+  if (e.button === 0) {
+    if (mouse.dragging && mouse.dragStart) {
+      selectUnitsInBox(mouse.dragStart, p, e.shiftKey);
+    } else {
+      const id = findNearestUnit(p.x, p.y, SIDE_BLUE, 42);
+      if (!e.shiftKey) selectedUnits.clear();
+      if (id !== null) {
+        if (selectedUnits.has(id) && e.shiftKey) selectedUnits.delete(id);
+        else selectedUnits.add(id);
+      }
+    }
+    mouse.down = false;
+    mouse.dragging = false;
+    mouse.dragStart = null;
+    mouse.dragEnd = null;
+    updateUI(true);
+  } else if (e.button === 2) {
+    issueMoveOrder(p.x, p.y);
+  }
+});
+canvas.addEventListener('mouseleave', () => {
+  mouse.down = false;
+  mouse.dragging = false;
+});
+
+function findNearestUnit(x, y, side = null, maxD = 35) {
+  let best = null, bd = maxD * maxD;
+  for (const u of units) {
+    if (side !== null && u.side !== side) continue;
+    if (u.aliveCount <= 0 || u.broken) continue;
+    const d = dist2(x, y, u.bannerX, u.bannerY);
+    if (d < bd) { bd = d; best = u.id; }
+  }
+  return best;
+}
+function selectUnitsInBox(a, b, additive) {
+  const x1 = Math.min(a.x, b.x), x2 = Math.max(a.x, b.x);
+  const y1 = Math.min(a.y, b.y), y2 = Math.max(a.y, b.y);
+  if (!additive) selectedUnits.clear();
+  for (const u of units) {
+    if (u.side !== SIDE_BLUE || u.aliveCount <= 0 || u.broken) continue;
+    if (u.bannerX >= x1 && u.bannerX <= x2 && u.bannerY >= y1 && u.bannerY <= y2) selectedUnits.add(u.id);
+  }
+}
+function selectByType(type) {
+  selectedUnits.clear();
+  for (const u of units) if (u.side === SIDE_BLUE && u.aliveCount > 0 && !u.broken && (!type || u.type === type)) selectedUnits.add(u.id);
+  updateUI(true);
+}
+
+document.getElementById('pauseBtn').addEventListener('click', () => togglePause());
+document.getElementById('resetBtn').addEventListener('click', () => { resetBattle(); updateUI(true); });
+document.getElementById('debugBtn').addEventListener('click', () => { debug = !debug; document.getElementById('debugBtn').classList.toggle('toggleOn', debug); });
+document.getElementById('advanceBtn').addEventListener('click', () => issueOrderToSelection('ADVANCE'));
+document.getElementById('holdBtn').addEventListener('click', () => issueOrderToSelection('HOLD'));
+document.getElementById('withdrawBtn').addEventListener('click', () => issueOrderToSelection('WITHDRAW'));
+document.getElementById('rallyBtn').addEventListener('click', () => issueOrderToSelection('RALLY'));
+document.getElementById('skirmishBtn').addEventListener('click', () => issueOrderToSelection('SKIRMISH'));
+document.getElementById('selAllBtn').addEventListener('click', () => selectByType(null));
+document.getElementById('selSkirmBtn').addEventListener('click', () => selectByType('skirmisher'));
+document.getElementById('selLineBtn').addEventListener('click', () => selectByType('line'));
+document.getElementById('selReserveBtn').addEventListener('click', () => selectByType('reserve'));
+
+window.addEventListener('keydown', e => {
+  if (e.target && ['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)) return;
+  if (e.code === 'Space') { e.preventDefault(); togglePause(); }
+  else if (e.key === 'd' || e.key === 'D') { debug = !debug; document.getElementById('debugBtn').classList.toggle('toggleOn', debug); }
+  else if (e.key === 'a' || e.key === 'A') issueOrderToSelection('ADVANCE');
+  else if (e.key === 'h' || e.key === 'H') issueOrderToSelection('HOLD');
+  else if (e.key === 'w' || e.key === 'W') issueOrderToSelection('WITHDRAW');
+  else if (e.key === 'g' || e.key === 'G') issueOrderToSelection('RALLY');
+  else if (e.key === 's' || e.key === 'S') issueOrderToSelection('SKIRMISH');
+  else if (e.key === '1') selectByType('skirmisher');
+  else if (e.key === '2') selectByType('line');
+  else if (e.key === '3') selectByType('reserve');
+  else if (e.key === '0') selectByType(null);
+});
+
+function togglePause() {
+  paused = !paused;
+  document.getElementById('pauseBtn').textContent = paused ? 'Resume' : 'Pause';
+}
+
+function updateUI(force = false) {
+  const armyEl = document.getElementById('armyStats');
+  const blueInitial = totalInitial(SIDE_BLUE), redInitial = totalInitial(SIDE_RED);
+  const blueAlive = totalAlive(SIDE_BLUE), redAlive = totalAlive(SIDE_RED);
+  const blueCoh = averageMetric(SIDE_BLUE, 'cohesion');
+  const redCoh = averageMetric(SIDE_RED, 'cohesion');
+  const blueFear = averageMetric(SIDE_BLUE, 'avgFear');
+  const redFear = averageMetric(SIDE_RED, 'avgFear');
+  armyEl.innerHTML = `
+    ${statLine('Time', formatTime(battleTime), battleTime / 300, '#d9c27c')}
+    ${statLine('Blue alive', blueAlive + '/' + blueInitial, blueAlive / blueInitial, '#5db1ff')}
+    ${statLine('Red alive', redAlive + '/' + redInitial, redAlive / redInitial, '#ff6666')}
+    ${statLine('Blue cohesion', fmtPct(blueCoh), blueCoh, '#91d783')}
+    ${statLine('Red cohesion', fmtPct(redCoh), redCoh, '#91d783')}
+    ${statLine('Blue fear', fmtPct(blueFear), blueFear, '#ffcd70')}
+    ${statLine('Red fear', fmtPct(redFear), redFear, '#ffcd70')}
+  `;
+
+  const selectedEl = document.getElementById('selectedStats');
+  const selected = Array.from(selectedUnits).map(id => units[id]).filter(Boolean);
+  if (!selected.length) {
+    selectedEl.innerHTML = 'No unit selected.';
+  } else if (selected.length === 1) {
+    const u = selected[0];
+    selectedEl.innerHTML = `
+      <div><strong>${SIDE_NAMES[u.side]} ${u.label} ${u.index + 1}</strong></div>
+      <div class="small">Order: ${u.order.type}${u.order.standing ? ' / standing' : ''}, officer: ${u.officerAlive ? 'alive' : 'fallen'}, banner: ${u.bannerLost ? 'lost' : 'visible'}</div>
+      ${statLine('Alive', u.aliveCount + '/' + u.soldiers.length, u.aliveCount / u.soldiers.length, u.side === SIDE_BLUE ? '#5db1ff' : '#ff6666')}
+      ${statLine('Cohesion', fmtPct(u.cohesion), u.cohesion, '#91d783')}
+      ${statLine('Fear', fmtPct(u.avgFear), u.avgFear, '#ffcd70')}
+      ${statLine('Fatigue', fmtPct(u.avgFatigue), u.avgFatigue, '#9cc5ff')}
+      ${statLine('Injury', fmtPct(u.avgInjury), u.avgInjury, '#d98989')}
+      ${statLine('Routing', u.routedCount + '', u.aliveCount ? u.routedCount / u.aliveCount : 0, '#dedede')}
+      <p class="small">Tip: Advance/Attack and Skirmish are standing orders. Front ranks close to weapon range; rear ranks preserve files unless gaps open. Individuals vary in constitution, senses, pain tolerance, skill, courage, and discipline.</p>
+    `;
+  } else {
+    let alive = 0, total = 0, fear = 0, fat = 0, coh = 0, routed = 0;
+    for (const u of selected) {
+      alive += u.aliveCount; total += u.soldiers.length; fear += u.avgFear; fat += u.avgFatigue; coh += u.cohesion; routed += u.routedCount;
+    }
+    fear /= selected.length; fat /= selected.length; coh /= selected.length;
+    selectedEl.innerHTML = `
+      <div><strong>${selected.length} units selected</strong></div>
+      ${statLine('Alive', alive + '/' + total, alive / total, '#5db1ff')}
+      ${statLine('Cohesion', fmtPct(coh), coh, '#91d783')}
+      ${statLine('Fear', fmtPct(fear), fear, '#ffcd70')}
+      ${statLine('Fatigue', fmtPct(fat), fat, '#9cc5ff')}
+      ${statLine('Routing', routed + '', alive ? routed / alive : 0, '#dedede')}
+    `;
+  }
+}
+
+function statLine(label, value, pct, color) {
+  pct = clamp(pct, 0, 1);
+  return `<div class="statLine"><span>${label}</span><div class="barOuter"><div class="barInner" style="width:${pct * 100}%; background:${color}"></div></div><span>${value}</span></div>`;
+}
+function averageMetric(side, field) {
+  let sum = 0, n = 0;
+  for (const u of units) if (u.side === side && u.aliveCount > 0) { sum += u[field]; n++; }
+  return n ? sum / n : 0;
+}
+
+// ------------------------------------------------------------
+// Main loop and victory
+// ------------------------------------------------------------
+function update(dt) {
+  if (paused) {
+    updateToast(dt);
+    return;
+  }
+  if (gameOver) {
+    updateToast(dt);
+    return;
+  }
+
+  battleTime += dt;
+  updateEnemyAI(dt);
+  updateUnits(dt);
+  buildGrid();
+  updateSoldiers(dt);
+  updateProjectiles(dt);
+
+  metricTimer -= dt;
+  if (metricTimer <= 0) {
+    metricTimer = 0.25;
+    for (const u of units) updateUnitMetrics(u);
+    checkVictory();
+  }
+
+  uiTimer -= dt;
+  if (uiTimer <= 0) {
+    uiTimer = 0.22;
+    updateUI();
+  }
+  updateToast(dt);
+}
+
+function checkVictory() {
+  const blueEffective = effectiveForce(SIDE_BLUE);
+  const redEffective = effectiveForce(SIDE_RED);
+  if (blueEffective <= totalInitial(SIDE_BLUE) * 0.16 || allBroken(SIDE_BLUE)) {
+    gameOver = true;
+    winnerText = 'Red victory: Blue army breaks';
+  } else if (redEffective <= totalInitial(SIDE_RED) * 0.16 || allBroken(SIDE_RED)) {
+    gameOver = true;
+    winnerText = 'Blue victory: Red army breaks';
+  }
+}
+function effectiveForce(side) {
+  let n = 0;
+  for (const u of units) if (u.side === side) n += Math.max(0, u.aliveCount - u.routedCount * 0.7);
+  return n;
+}
+function allBroken(side) {
+  let active = 0;
+  for (const u of units) if (u.side === side && u.aliveCount > 0 && !u.broken && u.cohesion > 0.18) active++;
+  return active <= 1;
+}
+
+function frame(now) {
+  const rawDt = Math.min(0.05, (now - lastFrame) / 1000 || 0.016);
+  lastFrame = now;
+  // Fixed-ish microsteps improve collision and melee stability on slow frames.
+  let remaining = rawDt;
+  while (remaining > 0) {
+    const dt = Math.min(remaining, 1 / 45);
+    update(dt);
+    remaining -= dt;
+  }
+  render();
+  requestAnimationFrame(frame);
+}
+
+resetBattle();
+updateUI(true);
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

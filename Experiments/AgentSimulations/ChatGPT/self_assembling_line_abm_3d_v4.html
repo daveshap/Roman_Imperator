@@ -1,0 +1,1206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Self-Assembling 3D ABM v4 — FSM + headed locomotion</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --panel: rgba(11, 13, 17, 0.84);
+    --line: rgba(255,255,255,0.13);
+    --text: #f4efe3;
+    --muted: #bbb4a6;
+    --gold: #e9bf62;
+    --blue: #8fd0ff;
+  }
+  html, body { margin:0; width:100%; height:100%; overflow:hidden; background:#101217; color:var(--text); font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  canvas { display:block; width:100vw; height:100vh; cursor:grab; touch-action:none; }
+  canvas.panning { cursor:move; }
+  canvas.orbiting { cursor:grabbing; }
+  #hud { position:fixed; top:14px; left:14px; width:390px; max-width:calc(100vw - 28px); border:1px solid var(--line); border-radius:15px; background:var(--panel); box-shadow:0 12px 35px rgba(0,0,0,.38); backdrop-filter:blur(10px); overflow:hidden; user-select:none; max-height:calc(100vh - 28px); overflow-y:auto; }
+  header { padding:13px 15px 10px; border-bottom:1px solid var(--line); }
+  h1 { margin:0; font-size:15px; font-weight:780; letter-spacing:.02em; }
+  p { margin:5px 0 0; font-size:12px; line-height:1.38; color:var(--muted); }
+  .pill { display:inline-block; margin-left:6px; padding:2px 8px; border-radius:999px; border:1px solid rgba(233,191,98,.45); color:var(--gold); font-size:11px; vertical-align:1px; }
+  .section { padding:11px 15px; border-bottom:1px solid var(--line); }
+  .section:last-child { border-bottom:0; }
+  .buttons { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .buttons3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+  button { color:var(--text); background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.16); border-radius:9px; padding:8px 9px; font:inherit; font-size:12px; cursor:pointer; }
+  button:hover { background:rgba(255,255,255,.14); }
+  button.primary { border-color:rgba(233,191,98,.58); background:rgba(233,191,98,.17); }
+  button.active { border-color:rgba(143,208,255,.60); background:rgba(143,208,255,.13); }
+  .row { display:grid; grid-template-columns:116px 1fr 54px; gap:8px; align-items:center; margin:8px 0; font-size:12px; }
+  label { color:var(--muted); }
+  output { color:var(--gold); text-align:right; font-variant-numeric:tabular-nums; }
+  input[type=range] { width:100%; }
+  .stats { display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:12px; }
+  .stat { padding:8px 9px; border-radius:10px; border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.05); }
+  .stat .label { color:var(--muted); font-size:11px; }
+  .stat .value { color:#fff; font-weight:750; margin-top:2px; font-variant-numeric:tabular-nums; }
+  #tip { position:fixed; right:14px; bottom:14px; max-width:520px; border:1px solid var(--line); border-radius:15px; background:var(--panel); padding:11px 13px; color:var(--muted); font-size:12px; line-height:1.42; backdrop-filter:blur(10px); box-shadow:0 12px 35px rgba(0,0,0,.38); }
+  .mini { color:var(--muted); font-size:11px; margin-top:7px; }
+  .checkrow { display:grid; gap:5px; margin-top:7px; }
+  kbd { color:#fff; background:rgba(255,255,255,.10); padding:1px 5px; border-radius:5px; font-size:11px; }
+  .speedNote { margin-top:8px; padding:8px 9px; border-radius:10px; border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.04); font-size:11px; line-height:1.4; color:var(--muted); }
+  .speedNote b { color:var(--gold); font-weight:650; }
+  .fsmLegend { display:grid; grid-template-columns:1fr 1fr; gap:4px 10px; margin-top:8px; font-size:11px; color:var(--muted); }
+  .fsmLegend span i { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <header>
+    <h1>Self-assembling ABM <span class="pill" id="status">forming</span></h1>
+    <p>v4: headed human locomotion + per-soldier FSM. They turn to face where they will walk — no reverse-crab into ranks.</p>
+  </header>
+  <div class="section">
+    <div class="buttons">
+      <button id="pause" class="primary">Pause</button>
+      <button id="scatter">Scatter / respawn</button>
+    </div>
+    <div class="buttons3" style="margin-top:8px">
+      <button id="formLine" class="active">LINE</button>
+      <button id="formSquare">SQUARE</button>
+      <button id="formRect">RECT</button>
+    </div>
+    <div class="buttons" style="margin-top:8px">
+      <button id="loose">Loose / mill</button>
+      <button id="turnLeft">Face left</button>
+      <button id="turnRight">Face right</button>
+      <button id="resetCam">Reset camera</button>
+      <button id="followCenter">Follow center</button>
+    </div>
+    <div class="mini">
+      Form: <kbd>1</kbd> line · <kbd>2</kbd> square · <kbd>3</kbd> rect · <kbd>M</kbd> mill · <kbd>Q/E</kbd> facing · <kbd>R</kbd> scatter · <kbd>Space</kbd> pause.<br>
+      Cam: <kbd>LMB</kbd> orbit · <kbd>RMB</kbd>/<kbd>Shift+LMB</kbd> pan · wheel · <kbd>WASD</kbd>.
+    </div>
+  </div>
+  <div class="section">
+    <div class="row"><label>Soldiers</label><input id="count" type="range" min="20" max="180" step="5" value="80"><output id="countOut">80</output></div>
+    <div class="row"><label>File spacing</label><input id="spacing" type="range" min="0.9" max="2.4" step="0.05" value="1.55"><output id="spacingOut">1.55</output></div>
+    <div class="row"><label>Rank spacing</label><input id="rankSpacing" type="range" min="0.9" max="2.4" step="0.05" value="1.45"><output id="rankOut">1.45</output></div>
+    <div class="row"><label>Rect aspect</label><input id="rectAspect" type="range" min="1.4" max="4.0" step="0.1" value="2.4"><output id="aspectOut">2.4</output></div>
+    <div class="row"><label>Body radius</label><input id="bodyRadius" type="range" min="0.25" max="0.9" step="0.01" value="0.48"><output id="bodyOut">0.48</output></div>
+    <div class="row"><label>Form pressure</label><input id="linePressure" type="range" min="0" max="12" step="0.1" value="7.0"><output id="lineOut">7.0</output></div>
+    <div class="row"><label>Separation</label><input id="separation" type="range" min="0" max="5" step="0.05" value="3.0"><output id="sepOut">3.0</output></div>
+    <div class="row"><label>Local cohesion</label><input id="cohesion" type="range" min="0" max="1.0" step="0.01" value="0.12"><output id="cohOut">0.12</output></div>
+    <div class="row"><label>Sense radius</label><input id="neighborRadius" type="range" min="5" max="34" step="0.5" value="24"><output id="senseOut">24</output></div>
+    <div class="row"><label>Time scale</label><input id="timeScale" type="range" min="0.1" max="3.0" step="0.1" value="1.0"><output id="timeOut">1.0×</output></div>
+    <div class="checkrow">
+      <label class="mini"><input id="links" type="checkbox"> show local neighbor links</label>
+      <label class="mini"><input id="analysisLine" type="checkbox"> show emergent analysis outline</label>
+      <label class="mini"><input id="showBodies" type="checkbox"> show hard collision discs</label>
+      <label class="mini"><input id="showStates" type="checkbox" checked> show FSM state discs</label>
+    </div>
+    <div class="speedNote">
+      <b>Headed locomotion (HSFM-style):</b> preferred travel direction from formation error →
+      turn body toward it → walk/run <b>forward only</b>. Holding faces the unit.
+      No intentional reverse/strafe into formation (emergency collision only).
+    </div>
+    <div class="fsmLegend">
+      <span><i style="background:#5ad4a0"></i>holding <b id="nHold">0</b></span>
+      <span><i style="background:#e9bf62"></i>turning <b id="nTurn">0</b></span>
+      <span><i style="background:#8fd0ff"></i>forming_up <b id="nForm">0</b></span>
+      <span><i style="background:#c48cff"></i>adjusting <b id="nAdj">0</b></span>
+      <span><i style="background:#999"></i>milling <b id="nMill">0</b></span>
+      <span><i style="background:#ff7a7a"></i>evading <b id="nEvade">0</b></span>
+    </div>
+  </div>
+  <div class="section stats">
+    <div class="stat"><div class="label">depth span</div><div class="value" id="depthSpan">—</div></div>
+    <div class="stat"><div class="label">frontage</div><div class="value" id="frontage">—</div></div>
+    <div class="stat"><div class="label">aspect (W/D)</div><div class="value" id="aspectNow">—</div></div>
+    <div class="stat"><div class="label">spacing quality</div><div class="value" id="spacingQuality">—</div></div>
+    <div class="stat"><div class="label">neighbor clusters</div><div class="value" id="clusters">—</div></div>
+    <div class="stat"><div class="label">avg speed</div><div class="value" id="avgSpeed">—</div></div>
+    <div class="stat"><div class="label">hard overlaps</div><div class="value" id="overlaps">—</div></div>
+    <div class="stat"><div class="label">camera</div><div class="value" id="camMode">orbit</div></div>
+  </div>
+</div>
+<div id="tip"><b>v4 FSM:</b> <b>forming_up</b> = walk toward a local formation fix (facing travel). <b>turning</b> = almost stop, rotate. <b>holding</b> = in place, face unit order. <b>adjusting</b> = small step after a micro-turn. <b>evading</b> = only for hard crowding. Inspired by headed social-force / unicycle pedestrian models: orientation first, then forward gait.</div>
+<script>
+(() => {
+'use strict';
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha: false });
+const DPR = Math.min(2, window.devicePixelRatio || 1);
+let W = 1, H = 1;
+function resize() {
+  W = Math.floor(innerWidth * DPR); H = Math.floor(innerHeight * DPR);
+  canvas.width = W; canvas.height = H;
+  canvas.style.width = innerWidth + 'px'; canvas.style.height = innerHeight + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+/**
+ * Human locomotion (equipped infantry) + headed-motion parameters.
+ * Pattern: preferred velocity → body heading tracks it → move mostly forward
+ * (Headed Social Force / unicycle-style pedestrian ABM).
+ */
+const LOCO = {
+  forwardRun: 4.0,
+  forwardWalk: 1.4,
+  forwardShuffle: 0.75,
+  // Emergency only — not used for formation dressing
+  emergencyStrafe: 0.9,
+  runConeDeg: 18,
+  // Align before committing to a step (degrees)
+  moveAlignDeg: 22,
+  turnAlignDeg: 35,
+  // Formation error thresholds (meters of "desired step") with hysteresis
+  holdEnter: 0.32,
+  holdExit: 0.55,
+  adjustEnter: 0.95,
+  formEnter: 0.50,
+  // rad/s
+  turnRateStand: 3.4,
+  turnRateWalk: 2.4,
+  turnRateRun: 0.9,
+  // How fast preferred velocity tracks steering (1/s)
+  prefResponse: 3.2,
+  brake: 6.0
+};
+
+const STATE = {
+  HOLDING: 'holding',
+  TURNING: 'turning',
+  FORMING_UP: 'forming_up',
+  ADJUSTING: 'adjusting',
+  MILLING: 'milling',
+  EVADING: 'evading'
+};
+
+const STATE_COLOR = {
+  holding: 'rgba(90,212,160,.35)',
+  turning: 'rgba(233,191,98,.40)',
+  forming_up: 'rgba(143,208,255,.38)',
+  adjusting: 'rgba(196,140,255,.36)',
+  milling: 'rgba(160,160,160,.30)',
+  evading: 'rgba(255,122,122,.42)'
+};
+
+const cfg = {
+  count: 80,
+  command: 'line',
+  facing: 0,
+  spacing: 1.55,
+  rankSpacing: 1.45,
+  rectAspect: 2.4,
+  bodyRadius: 0.48,
+  linePressure: 7.0,
+  separation: 3.0,
+  cohesion: 0.12,
+  personalSpace: 1.35,
+  depthBand: 3.2,
+  neighborRadius: 24,
+  obstacleAvoid: 1.35,
+  paused: false,
+  timeScale: 1.0,
+  links: false,
+  analysisLine: false,
+  showBodies: false,
+  showStates: true,
+  followCenter: false,
+  collisionIters: 4
+};
+
+const CAM_DEFAULT = { yaw: -0.73, pitch: 0.61, dist: 62, tx: 0, ty: 0, tz: 0 };
+const camera = {
+  target: { x: CAM_DEFAULT.tx, y: CAM_DEFAULT.ty, z: CAM_DEFAULT.tz },
+  yaw: CAM_DEFAULT.yaw, pitch: CAM_DEFAULT.pitch, dist: CAM_DEFAULT.dist,
+  eye: { x:0, y:0, z:0 }, fwd: { x:0, y:0, z:1 }, right: { x:1, y:0, z:0 }, up: { x:0, y:1, z:0 }, f: 900
+};
+
+function dot(a,b){ return a.x*b.x + a.y*b.y + a.z*b.z; }
+function sub(a,b){ return {x:a.x-b.x, y:a.y-b.y, z:a.z-b.z}; }
+function cross(a,b){ return {x:a.y*b.z-a.z*b.y, y:a.z*b.x-a.x*b.z, z:a.x*b.y-a.y*b.x}; }
+function norm(v){ const m=Math.hypot(v.x,v.y,v.z)||1; return {x:v.x/m,y:v.y/m,z:v.z/m}; }
+
+function updateCamera() {
+  const cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
+  camera.eye.x = camera.target.x + Math.sin(camera.yaw) * cp * camera.dist;
+  camera.eye.z = camera.target.z + Math.cos(camera.yaw) * cp * camera.dist;
+  camera.eye.y = camera.target.y + sp * camera.dist;
+  camera.fwd = norm(sub(camera.target, camera.eye));
+  camera.right = norm(cross(camera.fwd, {x:0,y:1,z:0}));
+  camera.up = norm(cross(camera.right, camera.fwd));
+  camera.f = Math.min(innerWidth, innerHeight) * 0.95;
+}
+function project(p) {
+  const q = sub(p, camera.eye);
+  const zc = dot(q, camera.fwd);
+  if (zc < 0.25) return null;
+  const xc = dot(q, camera.right), yc = dot(q, camera.up);
+  const scale = camera.f / zc;
+  return { x: innerWidth * 0.5 + xc * scale, y: innerHeight * 0.51 - yc * scale, z: zc, s: scale };
+}
+function screenToGround(sx, sy) {
+  updateCamera();
+  const ndcX = (sx - innerWidth * 0.5) / camera.f;
+  const ndcY = (innerHeight * 0.51 - sy) / camera.f;
+  const dir = norm({
+    x: camera.fwd.x + camera.right.x * ndcX + camera.up.x * ndcY,
+    y: camera.fwd.y + camera.right.y * ndcX + camera.up.y * ndcY,
+    z: camera.fwd.z + camera.right.z * ndcX + camera.up.z * ndcY
+  });
+  if (Math.abs(dir.y) < 1e-6) return null;
+  const t = -camera.eye.y / dir.y;
+  if (t <= 0) return null;
+  return { x: camera.eye.x + dir.x * t, z: camera.eye.z + dir.z * t };
+}
+function panOnGround(dxPx, dyPx) {
+  const scale = camera.dist * 0.0022;
+  const flatFwd = norm({ x: camera.fwd.x, y: 0, z: camera.fwd.z });
+  const flatRight = norm({ x: camera.right.x, y: 0, z: camera.right.z });
+  camera.target.x -= flatRight.x * dxPx * scale + flatFwd.x * dyPx * scale;
+  camera.target.z -= flatRight.z * dxPx * scale + flatFwd.z * dyPx * scale;
+  camera.target.x = clamp(camera.target.x, -90, 90);
+  camera.target.z = clamp(camera.target.z, -90, 90);
+}
+function resetCamera() {
+  camera.target.x = CAM_DEFAULT.tx; camera.target.y = CAM_DEFAULT.ty; camera.target.z = CAM_DEFAULT.tz;
+  camera.yaw = CAM_DEFAULT.yaw; camera.pitch = CAM_DEFAULT.pitch; camera.dist = CAM_DEFAULT.dist;
+  cfg.followCenter = false;
+  document.getElementById('followCenter').classList.remove('active');
+  document.getElementById('camMode').textContent = 'reset';
+}
+
+const obstacles = [
+  {x:-25,z:24,r:13,kind:'hill'}, {x:31,z:-23,r:11,kind:'hill'},
+  {x:-23,z:-15,r:5.9,kind:'ruin',sx:7,sz:4,rot:0.55}, {x:25,z:18,r:5.0,kind:'ruin',sx:5,sz:5,rot:-0.25},
+  {x:-10,z:30,r:2.8,kind:'rock'}, {x:13,z:-27,r:2.4,kind:'rock'}, {x:35,z:-4,r:2.2,kind:'rock'}
+];
+let soldiers = [];
+let time = 0;
+let metrics = {
+  depthRms:0, spacingQuality:0, clusters:0, avgSpeed:0, cx:0, cz:0,
+  minLat:0, maxLat:0, minDep:0, maxDep:0, frontage:0, depthSpan:0, aspect:0, overlaps:0,
+  nHold:0, nTurn:0, nForm:0, nAdj:0, nMill:0, nEvade:0
+};
+const keys = Object.create(null);
+
+function rand(a,b){ return a + Math.random()*(b-a); }
+function clamp(x,a,b){ return Math.max(a, Math.min(b, x)); }
+function lerp(a,b,t){ return a + (b-a)*t; }
+function smoothstep(t){ t=clamp(t,0,1); return t*t*(3-2*t); }
+function angleDiff(a,b){ return Math.atan2(Math.sin(a-b), Math.cos(a-b)); }
+function dist2(x1,z1,x2,z2){ return Math.hypot(x1-x2, z1-z2); }
+function facingVectors() {
+  const fwd = { x: Math.sin(cfg.facing), z: Math.cos(cfg.facing) };
+  const right = { x: Math.cos(cfg.facing), z: -Math.sin(cfg.facing) };
+  return {fwd, right};
+}
+function bodyR(){ return cfg.bodyRadius; }
+function isForming(){ return cfg.command === 'line' || cfg.command === 'square' || cfg.command === 'rect'; }
+
+function avoidSpawn(x,z) {
+  const r = bodyR();
+  for (const o of obstacles) {
+    if (o.kind === 'hill') continue;
+    if (Math.hypot(x-o.x,z-o.z) < o.r + r + 0.8) return false;
+  }
+  return Math.abs(x) < 58 && Math.abs(z) < 58;
+}
+function safeSpawn(wide=false) {
+  for (let k=0;k<800;k++) {
+    const r = wide ? rand(18,54) : rand(5,31);
+    const a = rand(0, Math.PI*2);
+    const x = Math.cos(a)*r + rand(-4,4), z = Math.sin(a)*r + rand(-4,4);
+    if (avoidSpawn(x,z)) return {x,z};
+  }
+  return {x:rand(-45,45), z:rand(-45,45)};
+}
+function makeSoldier(i, p) {
+  return {
+    id:i, isLeader:i===0,
+    x:p.x, z:p.z,
+    vx:0, vz:0,
+    heading:rand(-Math.PI,Math.PI),
+    // FSM
+    state: STATE.HOLDING,
+    stateTime: 0,
+    // Headed motion memory
+    prefX:0, prefZ:0,
+    travelHeading: 0,
+    desireMag: 0,
+    errorMag: 0,
+    speed:0,
+    phase:rand(0,Math.PI*2),
+    discipline:clamp(rand(.82,1.18) + (i===0 ? .12 : 0), .65, 1.35),
+    awareness:clamp(rand(.82,1.16) + (i===0 ? .08 : 0), .65, 1.28),
+    jitter:rand(0, Math.PI*2)
+  };
+}
+function rebuildSoldiers(wide=false) {
+  soldiers = [];
+  cfg.count = Number(document.getElementById('count').value);
+  for (let i=0;i<cfg.count;i++) soldiers.push(makeSoldier(i, safeSpawn(wide)));
+  for (let k=0;k<12;k++) resolveHardCollisions();
+  time = 0;
+}
+function scatter(wide=false) {
+  for (const s of soldiers) {
+    const p = safeSpawn(wide);
+    s.x=p.x; s.z=p.z; s.vx=0; s.vz=0;
+    s.heading=rand(-Math.PI,Math.PI);
+    s.state=STATE.HOLDING; s.stateTime=0;
+    s.prefX=0; s.prefZ=0; s.desireMag=0; s.errorMag=0;
+    s.phase=rand(0,Math.PI*2);
+  }
+  for (let k=0;k<12;k++) resolveHardCollisions();
+  time = 0;
+}
+function setCommand(cmd) {
+  cfg.command = cmd;
+  document.getElementById('formLine').classList.toggle('active', cmd==='line');
+  document.getElementById('formSquare').classList.toggle('active', cmd==='square');
+  document.getElementById('formRect').classList.toggle('active', cmd==='rect');
+  document.getElementById('loose').classList.toggle('active', cmd==='loose');
+  // Kick everyone out of holding so they re-evaluate.
+  for (const s of soldiers) {
+    if (s.state === STATE.HOLDING) { s.state = STATE.TURNING; s.stateTime = 0; }
+  }
+}
+function rotateFacing(delta) {
+  cfg.facing += delta;
+  for (const s of soldiers) {
+    if (s.state === STATE.HOLDING) { s.state = STATE.TURNING; s.stateTime = 0; }
+  }
+}
+
+function resolveHardCollisions() {
+  const r = bodyR();
+  const minDist = r * 2;
+  const minDist2 = minDist * minDist;
+  let overlaps = 0;
+  const n = soldiers.length;
+  for (let iter = 0; iter < cfg.collisionIters; iter++) {
+    for (let i = 0; i < n; i++) {
+      const a = soldiers[i];
+      for (let j = i + 1; j < n; j++) {
+        const b = soldiers[j];
+        let dx = b.x - a.x, dz = b.z - a.z;
+        let d2 = dx*dx + dz*dz;
+        if (d2 >= minDist2 && d2 > 1e-12) continue;
+        overlaps++;
+        let d = Math.sqrt(d2);
+        if (d < 1e-8) {
+          const ang = (i * 12.9898 + j * 78.233) % (Math.PI * 2);
+          dx = Math.cos(ang); dz = Math.sin(ang); d = 1e-8;
+        } else { dx /= d; dz /= d; }
+        const half = (minDist - d) * 0.5;
+        a.x -= dx * half; a.z -= dz * half;
+        b.x += dx * half; b.z += dz * half;
+        const closing = (b.vx-a.vx)*dx + (b.vz-a.vz)*dz;
+        if (closing < 0) {
+          const jImp = closing * 0.5;
+          a.vx += dx*jImp; a.vz += dz*jImp;
+          b.vx -= dx*jImp; b.vz -= dz*jImp;
+        }
+      }
+    }
+    for (const s of soldiers) {
+      for (const o of obstacles) {
+        if (o.kind === 'hill') continue;
+        const need = o.r + r;
+        let dx = s.x - o.x, dz = s.z - o.z;
+        let d = Math.hypot(dx, dz);
+        if (d >= need) continue;
+        overlaps++;
+        if (d < 1e-8) { dx = 1; dz = 0; d = 1e-8; } else { dx /= d; dz /= d; }
+        s.x += dx * (need - d); s.z += dz * (need - d);
+        const vn = s.vx*dx + s.vz*dz;
+        if (vn < 0) { s.vx -= dx*vn; s.vz -= dz*vn; }
+      }
+      const bound = 62, rr = r;
+      if (s.x > bound-rr) { s.x = bound-rr; if (s.vx>0) s.vx=0; }
+      if (s.x < -bound+rr) { s.x = -bound+rr; if (s.vx<0) s.vx=0; }
+      if (s.z > bound-rr) { s.z = bound-rr; if (s.vz>0) s.vz=0; }
+      if (s.z < -bound+rr) { s.z = -bound+rr; if (s.vz<0) s.vz=0; }
+    }
+  }
+  metrics.overlaps = overlaps;
+  return overlaps;
+}
+
+// ——— Formation steering: returns desired displacement vector (world xz), not velocity ———
+function computeDesire(s, fwd, right, globals) {
+  const hardR = bodyR();
+  const fileSp = cfg.spacing;
+  const rankSp = cfg.rankSpacing;
+  const cmd = cfg.command;
+  const sense = cfg.neighborRadius * s.awareness;
+  let count=0, relX=0, relZ=0, depthSum=0, latSum=0;
+  let sepX=0, sepZ=0, lateralCrowd=0, depthCrowd=0;
+  let leftLat=-Infinity, rightLat=Infinity, hasLeft=false, hasRight=false;
+  let frontDep=Infinity, backDep=-Infinity, hasFront=false, hasBack=false;
+  let emergency = false, emX=0, emZ=0;
+
+  for (const o of soldiers) {
+    if (o === s) continue;
+    const dx=o.x-s.x, dz=o.z-s.z;
+    const d=Math.hypot(dx,dz);
+    if (d > 1e-4 && d < sense) {
+      count++;
+      relX += dx; relZ += dz;
+      const lat = dx*right.x + dz*right.z;
+      const dep = dx*fwd.x + dz*fwd.z;
+      depthSum += dep; latSum += lat;
+
+      const softStart = Math.max(cfg.personalSpace, hardR*2 + 0.35);
+      if (d < softStart) {
+        const str = (softStart-d)/softStart;
+        sepX += -(dx/d)*str*str;
+        sepZ += -(dz/d)*str*str;
+        if (d < hardR*2 + 0.15) {
+          emergency = true;
+          emX += -(dx/d); emZ += -(dz/d);
+        }
+      }
+
+      if (Math.abs(dep) < cfg.depthBand) {
+        if (lat < 0 && lat > leftLat) { leftLat = lat; hasLeft = true; }
+        if (lat > 0 && lat < rightLat) { rightLat = lat; hasRight = true; }
+        const crowded = fileSp * .88;
+        const absLat = Math.abs(lat);
+        if (absLat < crowded) {
+          const side = absLat < .035 ? (s.id < o.id ? -1 : 1) : (lat > 0 ? -1 : 1);
+          lateralCrowd += side * Math.pow((crowded-absLat)/crowded, 2);
+        }
+      }
+
+      if (cmd !== 'line' && cmd !== 'loose' && Math.abs(lat) < cfg.depthBand) {
+        if (dep > 0 && dep < frontDep) { frontDep = dep; hasFront = true; }
+        if (dep < 0 && dep > backDep) { backDep = dep; hasBack = true; }
+        const crowdedD = rankSp * .88;
+        const absDep = Math.abs(dep);
+        if (absDep < crowdedD) {
+          const side = absDep < .035 ? (s.id < o.id ? -1 : 1) : (dep > 0 ? -1 : 1);
+          depthCrowd += side * Math.pow((crowdedD-absDep)/crowdedD, 2);
+        }
+      }
+    }
+  }
+
+  let dx = 0, dz = 0;
+  const press = cfg.linePressure * s.discipline;
+
+  if (cmd === 'loose') {
+    if (count) {
+      const m = Math.hypot(relX, relZ);
+      if (m > 0.1) {
+        // wander near neighbors
+        dx += (relX/m) * cfg.cohesion * 2.5;
+        dz += (relZ/m) * cfg.cohesion * 2.5;
+      }
+    }
+    dx += Math.cos(time*.65 + s.jitter) * 0.55;
+    dz += Math.sin(time*.59 + s.jitter) * 0.55;
+  } else if (count) {
+    const meanDepth = depthSum/count;
+    const meanLat = latSum/count;
+    const avgRelX = relX/count, avgRelZ = relZ/count;
+
+    if (cmd === 'line') {
+      // Depth collapse + file spacing → desired step vector (meters-ish)
+      dx += fwd.x * meanDepth * press * 0.12;
+      dz += fwd.z * meanDepth * press * 0.12;
+      addFileDesire(s, right, hasLeft, leftLat, hasRight, rightLat, fileSp, press, (x,z)=>{ dx+=x; dz+=z; });
+      dx += right.x * lateralCrowd * press * 0.16;
+      dz += right.z * lateralCrowd * press * 0.16;
+      addCohesionDesire(avgRelX, avgRelZ, right, fwd, count, 0.045, (x,z)=>{ dx+=x; dz+=z; });
+    } else {
+      addFileDesire(s, right, hasLeft, leftLat, hasRight, rightLat, fileSp, press, (x,z)=>{ dx+=x; dz+=z; });
+      addRankDesire(s, fwd, hasFront, frontDep, hasBack, backDep, rankSp, press, (x,z)=>{ dx+=x; dz+=z; });
+      dx += right.x * lateralCrowd * press * 0.14;
+      dz += right.z * lateralCrowd * press * 0.14;
+      dx += fwd.x * depthCrowd * press * 0.14;
+      dz += fwd.z * depthCrowd * press * 0.14;
+      dx += fwd.x * meanDepth * press * 0.018;
+      dz += fwd.z * meanDepth * press * 0.018;
+      dx += right.x * meanLat * press * 0.01;
+      dz += right.z * meanLat * press * 0.01;
+      addCohesionDesire(avgRelX, avgRelZ, right, fwd, count, 0.10, (x,z)=>{ dx+=x; dz+=z; });
+
+      const targetAspect = cmd === 'square' ? 1.0 : cfg.rectAspect;
+      const aspectErr = Math.log(Math.max(0.2, globals.aspect) / targetAspect);
+      const myLat = s.x*right.x + s.z*right.z;
+      const myDep = s.x*fwd.x + s.z*fwd.z;
+      const latFromCenter = myLat - globals.meanLat;
+      const depFromCenter = myDep - globals.meanDep;
+      const aspectK = press * 0.012;
+      dx += -right.x * latFromCenter * aspectErr * aspectK;
+      dz += -right.z * latFromCenter * aspectErr * aspectK;
+      dx += fwd.x * depFromCenter * aspectErr * aspectK * 0.85;
+      dz += fwd.z * depFromCenter * aspectErr * aspectK * 0.85;
+      if (cmd === 'square') {
+        dx += (globals.cx - s.x) * press * 0.004;
+        dz += (globals.cz - s.z) * press * 0.004;
+      }
+    }
+  }
+
+  // Soft separation as desire (not emergency)
+  dx += sepX * cfg.separation * 0.55;
+  dz += sepZ * cfg.separation * 0.55;
+
+  // Obstacles
+  for (const o of obstacles) {
+    if (o.kind === 'hill') continue;
+    const ox=s.x-o.x, oz=s.z-o.z, d=Math.hypot(ox,oz), ar=o.r+hardR+1.1;
+    if (d<ar && d>1e-4) {
+      const str=Math.pow((ar-d)/ar, 2);
+      dx += ox/d * cfg.obstacleAvoid * 1.4 * str;
+      dz += oz/d * cfg.obstacleAvoid * 1.4 * str;
+      if (d < o.r + hardR + 0.25) emergency = true;
+    }
+  }
+  const bound=62;
+  if (Math.abs(s.x)>bound-2) dx += -Math.sign(s.x)*1.2;
+  if (Math.abs(s.z)>bound-2) dz += -Math.sign(s.z)*1.2;
+
+  if (emergency) {
+    const em = Math.hypot(emX, emZ) || 1;
+    return { dx: emX/em * 1.2 + dx*0.2, dz: emZ/em * 1.2 + dz*0.2, emergency: true, neighborCount: count };
+  }
+  return { dx, dz, emergency: false, neighborCount: count };
+}
+
+function addFileDesire(s, right, hasLeft, leftLat, hasRight, rightLat, fileSp, press, add) {
+  const k = press * 0.14;
+  if (hasRight) { const err = clamp(rightLat - fileSp, -2.5, 2.5); add(right.x*err*k, right.z*err*k); }
+  if (hasLeft) { const err = clamp(leftLat + fileSp, -2.5, 2.5); add(right.x*err*k, right.z*err*k); }
+}
+function addRankDesire(s, fwd, hasFront, frontDep, hasBack, backDep, rankSp, press, add) {
+  const k = press * 0.14;
+  if (hasFront) { const err = clamp(frontDep - rankSp, -2.5, 2.5); add(fwd.x*err*k, fwd.z*err*k); }
+  if (hasBack) { const err = clamp(backDep + rankSp, -2.5, 2.5); add(fwd.x*err*k, fwd.z*err*k); }
+}
+function addCohesionDesire(avgRelX, avgRelZ, right, fwd, count, depFactor, add) {
+  const latC = avgRelX*right.x + avgRelZ*right.z;
+  const depC = avgRelX*fwd.x + avgRelZ*fwd.z;
+  const df = count < 4 ? .22 : depFactor;
+  const cohX = right.x*latC + fwd.x*depC*df;
+  const cohZ = right.z*latC + fwd.z*depC*df;
+  const m = Math.hypot(cohX, cohZ);
+  if (m > 0.1) {
+    const k = cfg.cohesion * Math.min(m/8, 1) * (count < 4 ? 1.6 : 0.7);
+    add(cohX/m*k, cohZ/m*k);
+  }
+}
+
+/**
+ * Finite-state machine for a single soldier.
+ * Core rule: if you need to go somewhere, face that way, then walk forward.
+ * Humans do not reverse-crab into a battle line.
+ */
+function updateFSM(s, desire, dt) {
+  const mag = Math.hypot(desire.dx, desire.dz);
+  s.errorMag = mag;
+  s.desireMag = mag;
+
+  if (desire.emergency) {
+    setState(s, STATE.EVADING);
+    s.travelHeading = Math.atan2(desire.dx, desire.dz);
+    return;
+  }
+
+  if (cfg.command === 'loose') {
+    setState(s, STATE.MILLING);
+    if (mag > 0.05) s.travelHeading = Math.atan2(desire.dx, desire.dz);
+    return;
+  }
+
+  // Preferred travel heading from desire (where they *want* to go)
+  if (mag > 0.08) s.travelHeading = Math.atan2(desire.dx, desire.dz);
+
+  const headErrTravel = Math.abs(angleDiff(s.travelHeading, s.heading));
+  const headErrForm = Math.abs(angleDiff(cfg.facing, s.heading));
+  const moveAlign = LOCO.moveAlignDeg * Math.PI / 180;
+  const turnAlign = LOCO.turnAlignDeg * Math.PI / 180;
+
+  // Hysteresis on error magnitude
+  let next = s.state;
+  if (s.state === STATE.HOLDING) {
+    if (mag > LOCO.holdExit) next = (headErrTravel > moveAlign) ? STATE.TURNING : STATE.FORMING_UP;
+    else if (headErrForm > turnAlign) next = STATE.TURNING; // re-dress facing
+  } else if (s.state === STATE.TURNING) {
+    if (mag < LOCO.holdEnter && headErrForm < moveAlign) next = STATE.HOLDING;
+    else if (mag >= LOCO.holdEnter && headErrTravel < moveAlign) {
+      next = mag < LOCO.adjustEnter ? STATE.ADJUSTING : STATE.FORMING_UP;
+    }
+    // else keep turning
+  } else if (s.state === STATE.FORMING_UP) {
+    if (mag < LOCO.holdEnter) next = headErrForm < turnAlign ? STATE.HOLDING : STATE.TURNING;
+    else if (headErrTravel > turnAlign) next = STATE.TURNING;
+    else if (mag < LOCO.adjustEnter) next = STATE.ADJUSTING;
+  } else if (s.state === STATE.ADJUSTING) {
+    if (mag < LOCO.holdEnter) next = headErrForm < turnAlign ? STATE.HOLDING : STATE.TURNING;
+    else if (mag > LOCO.adjustEnter * 1.15) next = headErrTravel > moveAlign ? STATE.TURNING : STATE.FORMING_UP;
+    else if (headErrTravel > turnAlign) next = STATE.TURNING;
+  } else if (s.state === STATE.EVADING || s.state === STATE.MILLING) {
+    next = mag < LOCO.holdEnter ? STATE.HOLDING : (headErrTravel > moveAlign ? STATE.TURNING : STATE.FORMING_UP);
+  }
+
+  // Minimum time in state to reduce flicker
+  if (next !== s.state && s.stateTime < 0.12 && s.state !== STATE.EVADING) next = s.state;
+  setState(s, next);
+}
+
+function setState(s, st) {
+  if (s.state !== st) { s.state = st; s.stateTime = 0; }
+}
+
+function applyHeadedLocomotion(s, desire, dt) {
+  s.stateTime += dt;
+  const mag = Math.hypot(desire.dx, desire.dz);
+
+  // Smooth preferred velocity toward a gait-limited target along desire.
+  let targetSp = 0;
+  if (s.state === STATE.FORMING_UP) {
+    // Longer fixes → walk/run; scale by remaining error
+    targetSp = clamp(mag * 1.8, LOCO.forwardShuffle, LOCO.forwardRun);
+    if (mag < 2.5) targetSp = Math.min(targetSp, LOCO.forwardWalk);
+    if (mag < 1.2) targetSp = Math.min(targetSp, LOCO.forwardShuffle * 1.2);
+  } else if (s.state === STATE.ADJUSTING) {
+    targetSp = clamp(mag * 1.1, 0.2, LOCO.forwardShuffle);
+  } else if (s.state === STATE.MILLING) {
+    targetSp = clamp(mag * 1.0, 0.15, LOCO.forwardWalk * 0.9);
+  } else if (s.state === STATE.EVADING) {
+    targetSp = LOCO.emergencyStrafe;
+  } else if (s.state === STATE.TURNING || s.state === STATE.HOLDING) {
+    targetSp = 0;
+  }
+
+  const tDirX = mag > 1e-6 ? desire.dx / mag : Math.sin(s.travelHeading);
+  const tDirZ = mag > 1e-6 ? desire.dz / mag : Math.cos(s.travelHeading);
+  const prefTx = tDirX * targetSp;
+  const prefTz = tDirZ * targetSp;
+  const k = 1 - Math.exp(-LOCO.prefResponse * dt);
+  s.prefX += (prefTx - s.prefX) * k;
+  s.prefZ += (prefTz - s.prefZ) * k;
+
+  // Desired body heading by state
+  let wantHeading = s.heading;
+  if (s.state === STATE.HOLDING) {
+    wantHeading = cfg.facing; // dress ranks, eyes front
+  } else if (s.state === STATE.TURNING || s.state === STATE.FORMING_UP || s.state === STATE.ADJUSTING || s.state === STATE.EVADING || s.state === STATE.MILLING) {
+    // Face the way you intend to walk (headed model)
+    if (mag > 0.06 || s.state === STATE.TURNING) wantHeading = s.travelHeading;
+  }
+
+  // Turn rate depends on current forward speed
+  const hf = Math.sin(s.heading), hz = Math.cos(s.heading);
+  const vFwdNow = s.vx*hf + s.vz*hz;
+  const runFrac = clamp(vFwdNow / LOCO.forwardRun, 0, 1);
+  let turnRate = lerp(LOCO.turnRateStand, LOCO.turnRateRun, smoothstep(runFrac));
+  if (s.state === STATE.TURNING) turnRate = LOCO.turnRateStand * 1.15;
+  if (s.state === STATE.HOLDING) turnRate = LOCO.turnRateStand * 0.9;
+  turnRate *= (0.88 + 0.24 * s.discipline);
+  s.heading += clamp(angleDiff(wantHeading, s.heading), -turnRate*dt, turnRate*dt);
+
+  // Unicycle-style velocity: move forward along *current* heading only
+  // (not along preferred vector — that would crab-walk).
+  const headErr = angleDiff(s.travelHeading, s.heading);
+  const align = Math.cos(headErr); // 1 = facing travel dir
+  const hf2 = Math.sin(s.heading), hz2 = Math.cos(s.heading);
+
+  let forwardSpeed = 0;
+  if (s.state === STATE.FORMING_UP || s.state === STATE.ADJUSTING || s.state === STATE.MILLING) {
+    // Only advance if roughly facing the travel direction — never intentional reverse.
+    if (align > 0.25) {
+      const prefAlong = s.prefX*hf2 + s.prefZ*hz2;
+      forwardSpeed = Math.max(0, prefAlong) * smoothstep(clamp((align - 0.25) / 0.75, 0, 1));
+    } else {
+      forwardSpeed = 0; // still turning in place
+    }
+  } else if (s.state === STATE.EVADING) {
+    // Brief exception: step away even if not perfectly aligned (stumble/dodge).
+    const prefAlong = s.prefX*hf2 + s.prefZ*hz2;
+    const prefLat = s.prefX*Math.cos(s.heading) + s.prefZ*(-Math.sin(s.heading));
+    // Prefer turn+forward; allow small lateral only while fleeing contact
+    forwardSpeed = clamp(prefAlong, -0.15, LOCO.emergencyStrafe);
+    const lat = clamp(prefLat, -LOCO.emergencyStrafe*0.6, LOCO.emergencyStrafe*0.6);
+    const rf = Math.cos(s.heading), rz = -Math.sin(s.heading);
+    // Blend toward target velocity
+    const tvx = hf2 * forwardSpeed + rf * lat;
+    const tvz = hz2 * forwardSpeed + rz * lat;
+    const bk = 1 - Math.exp(-10*dt);
+    s.vx += (tvx - s.vx) * bk;
+    s.vz += (tvz - s.vz) * bk;
+    s.speed = Math.hypot(s.vx, s.vz);
+    s.x += s.vx * dt; s.z += s.vz * dt;
+    s.phase += dt * (4.5 + s.speed * 2.35);
+    return;
+  } else if (s.state === STATE.TURNING) {
+    // Plant feet, rotate — tiny creep only if already well aligned
+    forwardSpeed = align > 0.92 && mag > LOCO.holdEnter ? 0.12 : 0;
+  } else if (s.state === STATE.HOLDING) {
+    // Hold ground; damp residual motion
+    forwardSpeed = 0;
+  }
+
+  // Cap by gait
+  const maxGait = (s.state === STATE.FORMING_UP)
+    ? (align > Math.cos(LOCO.runConeDeg*Math.PI/180) && mag > 3.0 ? LOCO.forwardRun : LOCO.forwardWalk)
+    : (s.state === STATE.ADJUSTING ? LOCO.forwardShuffle : LOCO.forwardWalk);
+  forwardSpeed = clamp(forwardSpeed, 0, maxGait);
+
+  const tvx = hf2 * forwardSpeed;
+  const tvz = hz2 * forwardSpeed;
+  // First-order velocity tracking (muscle response)
+  const resp = s.state === STATE.HOLDING ? LOCO.brake : 8.0;
+  const bk = 1 - Math.exp(-resp * dt);
+  s.vx += (tvx - s.vx) * bk;
+  s.vz += (tvz - s.vz) * bk;
+
+  // Hard zero reverse relative to body when not evading
+  const vFwd = s.vx*hf2 + s.vz*hz2;
+  const vLat = s.vx*Math.cos(s.heading) + s.vz*(-Math.sin(s.heading));
+  // Kill intentional sidestep / reverse while dressing
+  let vF = Math.max(0, vFwd);
+  let vL = vLat * 0.08; // residual only — almost pure forward gait
+  if (s.state === STATE.HOLDING || s.state === STATE.TURNING) { vF *= 0.5; vL *= 0.3; }
+  s.vx = hf2 * vF + Math.cos(s.heading) * vL;
+  s.vz = hz2 * vF + (-Math.sin(s.heading)) * vL;
+
+  s.speed = Math.hypot(s.vx, s.vz);
+  s.x += s.vx * dt;
+  s.z += s.vz * dt;
+  s.phase += dt * (4.5 + s.speed * 2.35);
+}
+
+function step(dt) {
+  time += dt;
+  const {fwd, right} = facingVectors();
+
+  // Globals for aspect / center
+  let gMinLat=Infinity,gMaxLat=-Infinity,gMinDep=Infinity,gMaxDep=-Infinity,gcx=0,gcz=0;
+  for (const s of soldiers) {
+    const lat = s.x*right.x + s.z*right.z;
+    const dep = s.x*fwd.x + s.z*fwd.z;
+    gMinLat=Math.min(gMinLat,lat); gMaxLat=Math.max(gMaxLat,lat);
+    gMinDep=Math.min(gMinDep,dep); gMaxDep=Math.max(gMaxDep,dep);
+    gcx+=s.x; gcz+=s.z;
+  }
+  const n = soldiers.length || 1;
+  gcx/=n; gcz/=n;
+  const frontage = Math.max(0.01, gMaxLat-gMinLat);
+  const depthSpan = Math.max(0.01, gMaxDep-gMinDep);
+  const globals = {
+    cx: gcx, cz: gcz,
+    meanLat: (gMinLat+gMaxLat)*0.5,
+    meanDep: (gMinDep+gMaxDep)*0.5,
+    aspect: frontage / depthSpan
+  };
+
+  for (const s of soldiers) {
+    const desire = computeDesire(s, fwd, right, globals);
+    updateFSM(s, desire, dt);
+    applyHeadedLocomotion(s, desire, dt);
+  }
+
+  resolveHardCollisions();
+
+  // After physics pushes, kill non-forward residuals again (except brief evade)
+  for (const s of soldiers) {
+    if (s.state === STATE.EVADING) continue;
+    const hf = Math.sin(s.heading), hz = Math.cos(s.heading);
+    const vFwd = Math.max(0, s.vx*hf + s.vz*hz);
+    s.vx = hf * vFwd * 0.98;
+    s.vz = hz * vFwd * 0.98;
+    s.speed = Math.hypot(s.vx, s.vz);
+  }
+}
+
+function computeMetrics() {
+  const {fwd, right} = facingVectors();
+  let cx=0, cz=0, sp=0;
+  const depths=[], lats=[];
+  let nHold=0,nTurn=0,nForm=0,nAdj=0,nMill=0,nEvade=0;
+  for (const s of soldiers) {
+    cx+=s.x; cz+=s.z; sp+=s.speed;
+    depths.push(s.x*fwd.x + s.z*fwd.z);
+    lats.push(s.x*right.x + s.z*right.z);
+    if (s.state===STATE.HOLDING) nHold++;
+    else if (s.state===STATE.TURNING) nTurn++;
+    else if (s.state===STATE.FORMING_UP) nForm++;
+    else if (s.state===STATE.ADJUSTING) nAdj++;
+    else if (s.state===STATE.MILLING) nMill++;
+    else if (s.state===STATE.EVADING) nEvade++;
+  }
+  const n = soldiers.length;
+  cx/=n; cz/=n; sp/=n;
+  const meanDepth = depths.reduce((a,b)=>a+b,0)/n;
+  const depthRms = Math.sqrt(depths.reduce((a,b)=>a+(b-meanDepth)**2,0)/n);
+  const sortedL = lats.slice().sort((a,b)=>a-b);
+  const sortedD = depths.slice().sort((a,b)=>a-b);
+  let good=0, total=0;
+  for (let i=0;i<sortedL.length-1;i++) {
+    const g = sortedL[i+1]-sortedL[i];
+    if (g < cfg.spacing*3.2) { total++; if (g > cfg.spacing*.70 && g < cfg.spacing*1.45) good++; }
+  }
+  if (cfg.command === 'square' || cfg.command === 'rect') {
+    for (let i=0;i<sortedD.length-1;i++) {
+      const g = sortedD[i+1]-sortedD[i];
+      if (g < cfg.rankSpacing*3.2) { total++; if (g > cfg.rankSpacing*.70 && g < cfg.rankSpacing*1.45) good++; }
+    }
+  }
+  const r = bodyR(), minDist = r*2;
+  let residual=0;
+  for (let i=0;i<n;i++) for (let j=i+1;j<n;j++)
+    if (dist2(soldiers[i].x,soldiers[i].z,soldiers[j].x,soldiers[j].z) < minDist-1e-3) residual++;
+  const minLat=sortedL[0]||0, maxLat=sortedL[sortedL.length-1]||0;
+  const minDep=sortedD[0]||0, maxDep=sortedD[sortedD.length-1]||0;
+  const frontage = maxLat-minLat, depthSpan = maxDep-minDep;
+  metrics = {
+    depthRms, spacingQuality: total?good/total:0, clusters: countClusters(cfg.neighborRadius*.72),
+    avgSpeed:sp, cx, cz, minLat, maxLat, minDep, maxDep,
+    frontage, depthSpan, aspect: depthSpan>0.05 ? frontage/depthSpan : 99,
+    meanDepth, overlaps: residual,
+    nHold, nTurn, nForm, nAdj, nMill, nEvade
+  };
+}
+function countClusters(radius) {
+  const n=soldiers.length, seen=new Array(n).fill(false);
+  let clusters=0;
+  for (let i=0;i<n;i++) {
+    if (seen[i]) continue;
+    clusters++;
+    const q=[i]; seen[i]=true;
+    for (let qi=0; qi<q.length; qi++) {
+      const a=soldiers[q[qi]];
+      for (let j=0;j<n;j++) if (!seen[j] && dist2(a.x,a.z,soldiers[j].x,soldiers[j].z)<radius) { seen[j]=true; q.push(j); }
+    }
+  }
+  return clusters;
+}
+
+// ——— Drawing (same visual language as v3) ———
+function strokeSeg(a,b,color,w,alpha=1) {
+  const pa=project(a), pb=project(b); if(!pa||!pb) return;
+  ctx.save(); ctx.globalAlpha=alpha; ctx.strokeStyle=color; ctx.lineWidth=Math.max(.6, ((pa.s+pb.s)*.5)*w); ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y); ctx.stroke(); ctx.restore();
+}
+function fillPoly(points, color, alpha=1) {
+  const ps=points.map(project); if(ps.some(p=>!p)) return;
+  ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle=color; ctx.beginPath();
+  ctx.moveTo(ps[0].x,ps[0].y); for(let i=1;i<ps.length;i++) ctx.lineTo(ps[i].x,ps[i].y); ctx.closePath(); ctx.fill(); ctx.restore();
+}
+function strokePoly(points, color, w=1, alpha=1) {
+  const ps=points.map(project); if(ps.some(p=>!p)) return;
+  ctx.save(); ctx.globalAlpha=alpha; ctx.strokeStyle=color; ctx.lineWidth=w; ctx.beginPath();
+  ctx.moveTo(ps[0].x,ps[0].y); for(let i=1;i<ps.length;i++) ctx.lineTo(ps[i].x,ps[i].y); ctx.closePath(); ctx.stroke(); ctx.restore();
+}
+function circle3(p, rWorld, color, alpha=1, stroke=null) {
+  const pp=project(p); if(!pp) return;
+  ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle=color; ctx.beginPath();
+  ctx.arc(pp.x,pp.y,Math.max(.8, rWorld*pp.s),0,Math.PI*2); ctx.fill();
+  if(stroke){ ctx.strokeStyle=stroke; ctx.lineWidth=1; ctx.stroke(); } ctx.restore();
+}
+function world(x,y,z){ return {x,y,z}; }
+function localPoint(s, right, fwd, rx, y, fz) { return { x:s.x + right.x*rx + fwd.x*fz, y, z:s.z + right.z*rx + fwd.z*fz }; }
+function drawSoldier(s) {
+  const fwd = {x:Math.sin(s.heading), z:Math.cos(s.heading)};
+  const right = {x:Math.cos(s.heading), z:-Math.sin(s.heading)};
+  const walk = clamp(s.speed/LOCO.forwardRun,0,1), swing=Math.sin(s.phase)*.25*walk, armSwing=-Math.sin(s.phase)*.20*walk;
+  const leader = s.isLeader;
+  const armor = leader ? '#d7b255' : '#979b9d', tunic = leader ? '#a23227' : '#8e2420', skin='#c8916c', leather='#4e3524', shield='#a82026', spear='#7a583a';
+  const hipL = localPoint(s,right,fwd,-.17,.92,0), hipR=localPoint(s,right,fwd,.17,.92,0);
+  const footL=localPoint(s,right,fwd,-.16,.06,-.04+swing), footR=localPoint(s,right,fwd,.16,.06,-.04-swing);
+  const kneeL=localPoint(s,right,fwd,-.17,.48,.02+swing*.55), kneeR=localPoint(s,right,fwd,.17,.48,.02-swing*.55);
+  strokeSeg(hipL,kneeL,leather,.15); strokeSeg(kneeL,footL,leather,.13); strokeSeg(hipR,kneeR,leather,.15); strokeSeg(kneeR,footR,leather,.13);
+  strokeSeg(localPoint(s,right,fwd,-.24,.88,-.01), localPoint(s,right,fwd,.24,.88,-.01), tunic,.34,.95);
+  const shL=localPoint(s,right,fwd,-.38,1.55,0), shR=localPoint(s,right,fwd,.38,1.55,0), waistL=localPoint(s,right,fwd,-.28,.94,0), waistR=localPoint(s,right,fwd,.28,.94,0);
+  fillPoly([shL,shR,waistR,waistL], armor,.96); strokePoly([shL,shR,waistR,waistL], 'rgba(0,0,0,.35)', 1, .6);
+  const handL=localPoint(s,right,fwd,-.47,.95,-.20+armSwing), handR=localPoint(s,right,fwd,.48,1.0,-.25-armSwing);
+  strokeSeg(shL,handL,skin,.13); strokeSeg(shR,handR,skin,.12);
+  const shieldC = localPoint(s,right,fwd,-.56,1.05,-.34);
+  const shieldPts = [
+    {x:shieldC.x+right.x*(-.05), y:1.47, z:shieldC.z+right.z*(-.05)},
+    {x:shieldC.x+right.x*(-.05), y:.66, z:shieldC.z+right.z*(-.05)},
+    {x:shieldC.x+right.x*.42, y:.62, z:shieldC.z+right.z*.42},
+    {x:shieldC.x+right.x*.42, y:1.42, z:shieldC.z+right.z*.42}
+  ];
+  fillPoly(shieldPts, shield, .95); strokePoly(shieldPts, '#e9bf62', 1.4, .75);
+  const spearBase = localPoint(s,right,fwd,.46,.95,-.18-armSwing);
+  const spearTip = localPoint(s,right,fwd,.46,1.32,-1.65-armSwing);
+  strokeSeg(spearBase,spearTip,spear,.06,.95); strokeSeg(spearTip, localPoint(s,right,fwd,.46,1.37,-1.82-armSwing), '#c9c9c9', .13,.95);
+  strokeSeg(world(s.x,1.0,s.z), world(s.x,1.63,s.z), armor,.38,.98);
+  circle3(world(s.x,1.92,s.z),.23,skin,1,'rgba(0,0,0,.25)');
+  circle3(world(s.x,2.04,s.z), .24, armor, .95);
+  const crestTop = leader ? 2.52 : 2.34;
+  strokeSeg(localPoint(s,right,fwd,-.04,2.14,0), localPoint(s,right,fwd,.04,crestTop,0), leader?'#e9bf62':tunic, leader?.19:.12, .98);
+  if (leader) {
+    strokeSeg(localPoint(s,right,fwd,.62,.1,.05), localPoint(s,right,fwd,.62,2.55,.05), '#8b6a45', .05, .9);
+    fillPoly([localPoint(s,right,fwd,.62,2.55,.05), localPoint(s,right,fwd,1.20,2.42,.05), localPoint(s,right,fwd,1.20,2.02,.05), localPoint(s,right,fwd,.62,2.15,.05)], '#e9bf62', .95);
+  }
+}
+function drawGrid() {
+  ctx.fillStyle = '#111318'; ctx.fillRect(0,0,innerWidth,innerHeight);
+  const grad = ctx.createLinearGradient(0,0,0,innerHeight);
+  grad.addColorStop(0,'#151922'); grad.addColorStop(0.55,'#222b24'); grad.addColorStop(1,'#181a17');
+  ctx.fillStyle=grad; ctx.fillRect(0,0,innerWidth,innerHeight);
+  const bounds=65, step=5;
+  for(let v=-bounds;v<=bounds;v+=step){
+    strokeSeg(world(-bounds,0,v),world(bounds,0,v),v===0?'rgba(245,238,218,.22)':'rgba(245,238,218,.10)',.03,v===0?.55:.38);
+    strokeSeg(world(v,0,-bounds),world(v,0,bounds),v===0?'rgba(245,238,218,.22)':'rgba(245,238,218,.10)',.03,v===0?.55:.38);
+  }
+}
+function drawDisc(x,z,r,color,alpha=.8,segments=32) {
+  const pts=[]; for(let i=0;i<segments;i++){ const a=i/segments*Math.PI*2; pts.push(world(x+Math.cos(a)*r,.015,z+Math.sin(a)*r)); }
+  fillPoly(pts,color,alpha);
+}
+function drawCuboid(o) {
+  const sx=o.sx||4, sz=o.sz||4, h=2.3, rot=o.rot||0, c=Math.cos(rot), s=Math.sin(rot);
+  const corners=[]; for(const yy of [0,h]) for(const [lx,lz] of [[-sx/2,-sz/2],[sx/2,-sz/2],[sx/2,sz/2],[-sx/2,sz/2]])
+    corners.push(world(o.x + lx*c - lz*s, yy, o.z + lx*s + lz*c));
+  const faces = [[0,1,2,3,'#6b6356'],[4,7,6,5,'#807769'],[0,4,5,1,'#5a5349'],[1,5,6,2,'#645c50'],[2,6,7,3,'#4e493f'],[3,7,4,0,'#70675b']];
+  const drawable = faces.map(f => ({f, depth:f.slice(0,4).reduce((a,i)=>a+(project(corners[i])?.z||0),0)/4})).sort((a,b)=>b.depth-a.depth);
+  for(const it of drawable) fillPoly(it.f.slice(0,4).map(i=>corners[i]), it.f[4], .98);
+}
+function drawTerrain() {
+  for (const o of obstacles) {
+    if(o.kind==='hill') { drawDisc(o.x,o.z,o.r,'#596545',.82,40); drawDisc(o.x,o.z,o.r*.58,'#6b754c',.62,32); }
+    else if(o.kind==='rock') { drawDisc(o.x,o.z,o.r,'#4c4b46',.8,18); circle3(world(o.x,.55,o.z),o.r*.34,'#68655d',.95); }
+    else if(o.kind==='ruin') drawCuboid(o);
+  }
+}
+function drawNeighborLinks() {
+  if (!cfg.links) return;
+  const {fwd} = facingVectors();
+  const maxLinks = soldiers.length > 130 ? 2 : 3;
+  for (let i=0;i<soldiers.length;i++) {
+    const a=soldiers[i]; let drawn=0;
+    const near=[];
+    for(let j=i+1;j<soldiers.length;j++) {
+      const b=soldiers[j], d=dist2(a.x,a.z,b.x,b.z);
+      if(d<4.5) near.push({b,d,dep:Math.abs((b.x-a.x)*fwd.x + (b.z-a.z)*fwd.z)});
+    }
+    near.sort((u,v)=>u.d-v.d);
+    for(const n of near) {
+      if(drawn>=maxLinks) break;
+      strokeSeg(world(a.x,.12,a.z), world(n.b.x,.12,n.b.z), n.dep < cfg.depthBand ? '#8fd0ff' : '#ffffff', .025, n.dep < cfg.depthBand ? .36 : .12);
+      drawn++;
+    }
+  }
+}
+function drawStateDiscs() {
+  if (!cfg.showStates) return;
+  for (const s of soldiers) drawDisc(s.x, s.z, bodyR()*1.05, STATE_COLOR[s.state] || 'rgba(255,255,255,.2)', 0.9, 18);
+}
+function drawBodyDiscs() {
+  if (!cfg.showBodies) return;
+  for (const s of soldiers) drawDisc(s.x, s.z, bodyR(), s.isLeader ? 'rgba(233,191,98,.22)' : 'rgba(143,208,255,.16)', 0.85, 20);
+}
+function drawAnalysisOutline() {
+  if (!cfg.analysisLine || soldiers.length < 2) return;
+  const {fwd, right} = facingVectors();
+  const corners = [
+    [metrics.minLat, metrics.minDep],
+    [metrics.maxLat, metrics.minDep],
+    [metrics.maxLat, metrics.maxDep],
+    [metrics.minLat, metrics.maxDep]
+  ].map(([lat, dep]) => world(right.x*lat + fwd.x*dep, 0.08, right.z*lat + fwd.z*dep));
+  for (let i=0;i<4;i++) strokeSeg(corners[i], corners[(i+1)%4], '#8fd0ff', .04, .45);
+  strokeSeg(world(metrics.cx,.2,metrics.cz), world(metrics.cx + fwd.x*2.0, 2.0, metrics.cz + fwd.z*2.0), '#e9bf62', .05, .55);
+}
+function render() {
+  updateCamera(); drawGrid(); drawTerrain(); drawStateDiscs(); drawBodyDiscs(); drawAnalysisOutline(); drawNeighborLinks();
+  const sorted = soldiers.map(s=>({s, p:project(world(s.x,0,s.z))})).filter(o=>o.p).sort((a,b)=>b.p.z-a.p.z);
+  for (const item of sorted) drawSoldier(item.s);
+}
+function updateHud() {
+  document.getElementById('depthSpan').textContent = metrics.depthSpan.toFixed(1)+' m';
+  document.getElementById('frontage').textContent = metrics.frontage.toFixed(1)+' m';
+  document.getElementById('aspectNow').textContent = metrics.aspect > 20 ? '∞' : metrics.aspect.toFixed(2);
+  document.getElementById('spacingQuality').textContent = Math.round(metrics.spacingQuality*100)+'%';
+  document.getElementById('clusters').textContent = String(metrics.clusters);
+  document.getElementById('avgSpeed').textContent = metrics.avgSpeed.toFixed(2)+' m/s';
+  document.getElementById('overlaps').textContent = String(metrics.overlaps);
+  document.getElementById('nHold').textContent = metrics.nHold;
+  document.getElementById('nTurn').textContent = metrics.nTurn;
+  document.getElementById('nForm').textContent = metrics.nForm;
+  document.getElementById('nAdj').textContent = metrics.nAdj;
+  document.getElementById('nMill').textContent = metrics.nMill;
+  document.getElementById('nEvade').textContent = metrics.nEvade;
+
+  let status = cfg.paused ? 'paused' : cfg.command;
+  if (!cfg.paused && isForming()) {
+    const majorityHold = metrics.nHold > soldiers.length * 0.7;
+    const formed = majorityHold && metrics.avgSpeed < 0.35 && metrics.spacingQuality > 0.55 && metrics.clusters <= 2;
+    status = formed ? 'holding formation' : (metrics.nForm + metrics.nTurn > metrics.nHold ? 'forming up' : 'dressing ranks');
+  } else if (!cfg.paused && cfg.command === 'loose') status = 'milling';
+  document.getElementById('status').textContent = status;
+}
+
+// Camera input
+let dragMode = null, lastX=0, lastY=0, lastTap=0;
+function setCursor() {
+  canvas.classList.toggle('orbiting', dragMode === 'orbit');
+  canvas.classList.toggle('panning', dragMode === 'pan');
+}
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('pointerdown', e => {
+  const wantPan = e.button === 1 || e.button === 2 || (e.button === 0 && e.shiftKey);
+  dragMode = wantPan ? 'pan' : (e.button === 0 ? 'orbit' : null);
+  if (!dragMode) return;
+  lastX = e.clientX; lastY = e.clientY;
+  canvas.setPointerCapture(e.pointerId); setCursor();
+  document.getElementById('camMode').textContent = dragMode;
+  if (e.button === 0 && !e.shiftKey) {
+    const now = performance.now();
+    if (now - lastTap < 320) resetCamera();
+    lastTap = now;
+  }
+});
+canvas.addEventListener('pointermove', e => {
+  if (!dragMode) return;
+  const dx = e.clientX - lastX, dy = e.clientY - lastY;
+  lastX = e.clientX; lastY = e.clientY;
+  if (dragMode === 'orbit') {
+    camera.yaw -= dx * 0.006;
+    camera.pitch = clamp(camera.pitch + dy * 0.004, 0.12, 1.35);
+  } else {
+    panOnGround(dx, dy);
+    if (cfg.followCenter) { cfg.followCenter=false; document.getElementById('followCenter').classList.remove('active'); }
+  }
+});
+canvas.addEventListener('pointerup', e => {
+  dragMode = null; setCursor();
+  try { canvas.releasePointerCapture(e.pointerId); } catch {}
+  document.getElementById('camMode').textContent = cfg.followCenter ? 'follow' : 'idle';
+});
+canvas.addEventListener('pointercancel', () => { dragMode=null; setCursor(); });
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const before = screenToGround(e.clientX, e.clientY);
+  camera.dist = clamp(camera.dist * Math.exp(e.deltaY * 0.0011), 12, 140);
+  const after = screenToGround(e.clientX, e.clientY);
+  if (before && after) { camera.target.x += before.x-after.x; camera.target.z += before.z-after.z; }
+  document.getElementById('camMode').textContent = 'zoom';
+}, { passive:false });
+
+function bindRange(id,key,out,fmt=(v)=>Number(v).toFixed(2)) {
+  const el=document.getElementById(id), oo=document.getElementById(out);
+  const f=()=>{
+    cfg[key]=Number(el.value); oo.textContent=fmt(el.value);
+    if(key==='spacing') cfg.personalSpace = Math.max(1.05, cfg.spacing*.87);
+    if(key==='bodyRadius') {
+      const minSpace = cfg.bodyRadius*2 + 0.15;
+      if (cfg.spacing < minSpace) {
+        cfg.spacing = minSpace;
+        document.getElementById('spacing').value = cfg.spacing.toFixed(2);
+        document.getElementById('spacingOut').textContent = Number(cfg.spacing).toFixed(2);
+        cfg.personalSpace = Math.max(1.05, cfg.spacing*.87);
+      }
+      if (cfg.rankSpacing < minSpace) {
+        cfg.rankSpacing = minSpace;
+        document.getElementById('rankSpacing').value = cfg.rankSpacing.toFixed(2);
+        document.getElementById('rankOut').textContent = Number(cfg.rankSpacing).toFixed(2);
+      }
+    }
+  };
+  el.addEventListener('input',f); f();
+}
+bindRange('spacing','spacing','spacingOut');
+bindRange('rankSpacing','rankSpacing','rankOut');
+bindRange('rectAspect','rectAspect','aspectOut', v => Number(v).toFixed(1));
+bindRange('bodyRadius','bodyRadius','bodyOut');
+bindRange('linePressure','linePressure','lineOut',v=>Number(v).toFixed(1));
+bindRange('separation','separation','sepOut',v=>Number(v).toFixed(1));
+bindRange('cohesion','cohesion','cohOut');
+bindRange('neighborRadius','neighborRadius','senseOut',v=>Number(v).toFixed(0));
+bindRange('timeScale','timeScale','timeOut',v=>Number(v).toFixed(1)+'×');
+
+document.getElementById('links').addEventListener('change',e=>cfg.links=e.target.checked);
+document.getElementById('analysisLine').addEventListener('change',e=>cfg.analysisLine=e.target.checked);
+document.getElementById('showBodies').addEventListener('change',e=>cfg.showBodies=e.target.checked);
+document.getElementById('showStates').addEventListener('change',e=>cfg.showStates=e.target.checked);
+document.getElementById('pause').onclick=()=>{ cfg.paused=!cfg.paused; document.getElementById('pause').textContent=cfg.paused?'Resume':'Pause'; };
+document.getElementById('scatter').onclick=()=>scatter(false);
+document.getElementById('formLine').onclick=()=>setCommand('line');
+document.getElementById('formSquare').onclick=()=>setCommand('square');
+document.getElementById('formRect').onclick=()=>setCommand('rect');
+document.getElementById('loose').onclick=()=>setCommand('loose');
+document.getElementById('turnLeft').onclick=()=>rotateFacing(-Math.PI/12);
+document.getElementById('turnRight').onclick=()=>rotateFacing(Math.PI/12);
+document.getElementById('resetCam').onclick=()=>resetCamera();
+document.getElementById('followCenter').onclick=()=>{
+  cfg.followCenter = !cfg.followCenter;
+  document.getElementById('followCenter').classList.toggle('active', cfg.followCenter);
+  document.getElementById('camMode').textContent = cfg.followCenter ? 'follow' : 'idle';
+};
+document.getElementById('count').addEventListener('input',e=>document.getElementById('countOut').textContent=e.target.value);
+document.getElementById('count').addEventListener('change',()=>rebuildSoldiers(false));
+
+function isTypingTarget(el){ return el && (el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.isContentEditable); }
+addEventListener('keydown', e => {
+  if (isTypingTarget(e.target)) return;
+  keys[e.key.toLowerCase()] = true;
+  if (e.code.startsWith('Arrow')) keys[e.code] = true;
+  if (e.key === ' ') { e.preventDefault(); document.getElementById('pause').click(); }
+  const k = e.key.toLowerCase();
+  if (k==='r') scatter(e.shiftKey);
+  if (k==='1'||k==='f') setCommand('line');
+  if (k==='2') setCommand('square');
+  if (k==='3') setCommand('rect');
+  if (k==='m') setCommand('loose');
+  if (k==='q') rotateFacing(-Math.PI/12);
+  if (k==='e') rotateFacing(Math.PI/12);
+  if (k==='h'||e.key==='Home') resetCamera();
+  if (k==='c') document.getElementById('followCenter').click();
+  if (k==='='||k==='+') camera.dist = clamp(camera.dist*0.92,12,140);
+  if (k==='-'||k==='_') camera.dist = clamp(camera.dist*1.08,12,140);
+});
+addEventListener('keyup', e => {
+  keys[e.key.toLowerCase()] = false;
+  if (e.code.startsWith('Arrow')) keys[e.code] = false;
+});
+addEventListener('blur', () => { for (const k of Object.keys(keys)) keys[k]=false; });
+
+function updateCameraControls(dt) {
+  updateCamera();
+  const flatFwd = norm({ x: camera.fwd.x, y:0, z: camera.fwd.z });
+  const flatRight = norm({ x: camera.right.x, y:0, z: camera.right.z });
+  const speed = camera.dist * 0.85;
+  let mx=0, mz=0;
+  if (keys['w']||keys['ArrowUp']) { mx+=flatFwd.x; mz+=flatFwd.z; }
+  if (keys['s']||keys['ArrowDown']) { mx-=flatFwd.x; mz-=flatFwd.z; }
+  if (keys['a']||keys['ArrowLeft']) { mx-=flatRight.x; mz-=flatRight.z; }
+  if (keys['d']||keys['ArrowRight']) { mx+=flatRight.x; mz+=flatRight.z; }
+  const mag = Math.hypot(mx,mz);
+  if (mag>0) {
+    mx/=mag; mz/=mag;
+    camera.target.x = clamp(camera.target.x + mx*speed*dt, -90, 90);
+    camera.target.z = clamp(camera.target.z + mz*speed*dt, -90, 90);
+    if (cfg.followCenter) { cfg.followCenter=false; document.getElementById('followCenter').classList.remove('active'); }
+  }
+  if (cfg.followCenter && soldiers.length) {
+    const k = 1 - Math.exp(-4.5*dt);
+    camera.target.x += (metrics.cx - camera.target.x)*k;
+    camera.target.z += (metrics.cz - camera.target.z)*k;
+  }
+}
+
+rebuildSoldiers(false);
+computeMetrics();
+let last = performance.now();
+function loop(now) {
+  requestAnimationFrame(loop);
+  const dt = Math.min(.05,(now-last)/1000); last=now;
+  updateCameraControls(dt);
+  if (!cfg.paused) step(dt * cfg.timeScale);
+  computeMetrics();
+  render();
+  updateHud();
+}
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

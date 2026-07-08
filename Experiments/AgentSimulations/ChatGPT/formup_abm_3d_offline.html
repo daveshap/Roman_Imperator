@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Offline 3D ABM Formation Prototype</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --panel: rgba(11, 13, 17, 0.82);
+    --line: rgba(255,255,255,0.13);
+    --text: #f4efe3;
+    --muted: #bbb4a6;
+    --gold: #e9bf62;
+  }
+  html, body { margin:0; width:100%; height:100%; overflow:hidden; background:#101217; color:var(--text); font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  canvas { display:block; width:100vw; height:100vh; cursor:grab; }
+  canvas:active { cursor:grabbing; }
+  #hud { position:fixed; top:14px; left:14px; width:350px; max-width:calc(100vw - 28px); border:1px solid var(--line); border-radius:15px; background:var(--panel); box-shadow:0 12px 35px rgba(0,0,0,.38); backdrop-filter:blur(10px); overflow:hidden; user-select:none; }
+  header { padding:13px 15px 10px; border-bottom:1px solid var(--line); }
+  h1 { margin:0; font-size:15px; font-weight:780; letter-spacing:.02em; }
+  p { margin:5px 0 0; font-size:12px; line-height:1.38; color:var(--muted); }
+  .pill { display:inline-block; margin-left:6px; padding:2px 8px; border-radius:999px; border:1px solid rgba(233,191,98,.45); color:var(--gold); font-size:11px; vertical-align:1px; }
+  .section { padding:11px 15px; border-bottom:1px solid var(--line); }
+  .section:last-child { border-bottom:0; }
+  .buttons { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  button { color:var(--text); background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.16); border-radius:9px; padding:8px 9px; font:inherit; font-size:12px; cursor:pointer; }
+  button:hover { background:rgba(255,255,255,.14); }
+  button.primary { border-color:rgba(233,191,98,.58); background:rgba(233,191,98,.17); }
+  .row { display:grid; grid-template-columns:105px 1fr 50px; gap:8px; align-items:center; margin:8px 0; font-size:12px; }
+  label { color:var(--muted); }
+  output { color:var(--gold); text-align:right; font-variant-numeric:tabular-nums; }
+  input[type=range] { width:100%; }
+  .stats { display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:12px; }
+  .stat { padding:8px 9px; border-radius:10px; border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.05); }
+  .stat .label { color:var(--muted); font-size:11px; }
+  .stat .value { color:#fff; font-weight:750; margin-top:2px; font-variant-numeric:tabular-nums; }
+  #tip { position:fixed; right:14px; bottom:14px; max-width:430px; border:1px solid var(--line); border-radius:15px; background:var(--panel); padding:11px 13px; color:var(--muted); font-size:12px; line-height:1.42; backdrop-filter:blur(10px); box-shadow:0 12px 35px rgba(0,0,0,.38); }
+  .mini { color:var(--muted); font-size:11px; margin-top:7px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <header>
+    <h1>Offline 3D ABM form-up <span class="pill" id="status">forming</span></h1>
+    <p>No external assets or libraries. Soldiers are procedural articulated rigs projected into a 3D camera view.</p>
+  </header>
+  <div class="section">
+    <div class="buttons">
+      <button id="pause" class="primary">Pause</button>
+      <button id="scatter">Scatter / respawn</button>
+      <button id="line">Line</button>
+      <button id="block">Block</button>
+      <button id="wedge">Wedge</button>
+      <button id="moveTarget">Move target</button>
+    </div>
+    <div class="mini">Drag/wheel camera. Double-click ground to move target. Space pauses. R scatters.</div>
+  </div>
+  <div class="section">
+    <div class="row"><label>Soldiers</label><input id="count" type="range" min="20" max="160" step="5" value="80"><output id="countOut">80</output></div>
+    <div class="row"><label>Slot pull</label><input id="slotPull" type="range" min="0" max="2.5" step="0.05" value="1.15"><output id="slotOut">1.15</output></div>
+    <div class="row"><label>Separation</label><input id="separation" type="range" min="0" max="2.5" step="0.05" value="1.45"><output id="sepOut">1.45</output></div>
+    <div class="row"><label>Cohesion</label><input id="cohesion" type="range" min="0" max="1.4" step="0.05" value="0.32"><output id="cohOut">0.32</output></div>
+    <div class="row"><label>Alignment</label><input id="alignment" type="range" min="0" max="1.5" step="0.05" value="0.42"><output id="alignOut">0.42</output></div>
+    <div class="row"><label>Time scale</label><input id="timeScale" type="range" min="0.1" max="3.0" step="0.1" value="1.0"><output id="timeOut">1.0×</output></div>
+    <label class="mini"><input id="debug" type="checkbox" checked> show formation slots and assignment lines</label>
+  </div>
+  <div class="section stats">
+    <div class="stat"><div class="label">mean slot error</div><div class="value" id="meanErr">—</div></div>
+    <div class="stat"><div class="label">formed up</div><div class="value" id="formed">—</div></div>
+    <div class="stat"><div class="label">cohesion radius</div><div class="value" id="radius">—</div></div>
+    <div class="stat"><div class="label">avg speed</div><div class="value" id="avgSpeed">—</div></div>
+  </div>
+</div>
+<div id="tip"><b>What to look for:</b> the target slots are not a commander moving each body by hand. Each soldier combines slot pressure with local neighbor rules. Try extreme sliders: high slot pull makes crossing and clumping; high separation makes the unit breathe outward; low cohesion produces stragglers.</div>
+<script>
+(() => {
+'use strict';
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha: false });
+const DPR = Math.min(2, window.devicePixelRatio || 1);
+let W = 1, H = 1;
+function resize() {
+  W = Math.floor(innerWidth * DPR); H = Math.floor(innerHeight * DPR);
+  canvas.width = W; canvas.height = H;
+  canvas.style.width = innerWidth + 'px'; canvas.style.height = innerHeight + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+const cfg = {
+  count: 80,
+  formation: 'block',
+  anchor: {x:0, z:0},
+  spacingX: 1.35,
+  spacingZ: 1.15,
+  slotPull: 1.15,
+  separation: 1.45,
+  cohesion: 0.32,
+  alignment: 0.42,
+  personalSpace: 1.25,
+  neighborRadius: 4.0,
+  obstacleAvoid: 1.25,
+  maxSpeed: 4.6,
+  maxForce: 8.5,
+  damping: 0.88,
+  reassignPeriod: 1.15,
+  paused: false,
+  timeScale: 1.0,
+  debug: true
+};
+
+const camera = {
+  target: {x:0, y:0, z:0},
+  yaw: -0.73,
+  pitch: 0.61,
+  dist: 62,
+  eye: {x:0,y:0,z:0},
+  fwd: {x:0,y:0,z:1},
+  right: {x:1,y:0,z:0},
+  up: {x:0,y:1,z:0},
+  f: 900
+};
+function dot(a,b){ return a.x*b.x + a.y*b.y + a.z*b.z; }
+function sub(a,b){ return {x:a.x-b.x, y:a.y-b.y, z:a.z-b.z}; }
+function cross(a,b){ return {x:a.y*b.z-a.z*b.y, y:a.z*b.x-a.x*b.z, z:a.x*b.y-a.y*b.x}; }
+function norm(v){ const m=Math.hypot(v.x,v.y,v.z)||1; return {x:v.x/m,y:v.y/m,z:v.z/m}; }
+function add3(a,b){ return {x:a.x+b.x, y:a.y+b.y, z:a.z+b.z}; }
+function mul3(a,s){ return {x:a.x*s, y:a.y*s, z:a.z*s}; }
+function updateCamera() {
+  const cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
+  camera.eye.x = camera.target.x + Math.sin(camera.yaw) * cp * camera.dist;
+  camera.eye.z = camera.target.z + Math.cos(camera.yaw) * cp * camera.dist;
+  camera.eye.y = camera.target.y + sp * camera.dist;
+  camera.fwd = norm(sub(camera.target, camera.eye));
+  camera.right = norm(cross(camera.fwd, {x:0,y:1,z:0}));
+  camera.up = norm(cross(camera.right, camera.fwd));
+  camera.f = Math.min(innerWidth, innerHeight) * 0.95;
+}
+function project(p) {
+  const q = sub(p, camera.eye);
+  const zc = dot(q, camera.fwd);
+  if (zc < 0.25) return null;
+  const xc = dot(q, camera.right);
+  const yc = dot(q, camera.up);
+  const scale = camera.f / zc;
+  return { x: innerWidth * 0.5 + xc * scale, y: innerHeight * 0.51 - yc * scale, z: zc, s: scale };
+}
+function screenRay(clientX, clientY) {
+  const x = (clientX - innerWidth * 0.5) / camera.f;
+  const y = -(clientY - innerHeight * 0.51) / camera.f;
+  return norm(add3(add3(mul3(camera.right, x), mul3(camera.up, y)), camera.fwd));
+}
+function pickGround(clientX, clientY) {
+  const dir = screenRay(clientX, clientY);
+  if (Math.abs(dir.y) < 1e-5) return null;
+  const t = -camera.eye.y / dir.y;
+  if (t < 0) return null;
+  return add3(camera.eye, mul3(dir, t));
+}
+
+const obstacles = [
+  {x:-25,z:24,r:13,kind:'hill'}, {x:31,z:-23,r:11,kind:'hill'},
+  {x:-23,z:-15,r:5.9,kind:'ruin',sx:7,sz:4,rot:0.55}, {x:25,z:18,r:5.0,kind:'ruin',sx:5,sz:5,rot:-0.25},
+  {x:-10,z:30,r:2.8,kind:'rock'}, {x:13,z:-27,r:2.4,kind:'rock'}, {x:35,z:-4,r:2.2,kind:'rock'}
+];
+let soldiers = [];
+let slots = [];
+let time = 0, lastAssign = 99;
+function rand(a,b){ return a + Math.random()*(b-a); }
+function clamp(x,a,b){ return Math.max(a, Math.min(b, x)); }
+function dist2d(a,b){ return Math.hypot(a.x-b.x, a.z-b.z); }
+function angleDiff(a,b){ return Math.atan2(Math.sin(a-b), Math.cos(a-b)); }
+function avoidSpawn(x,z) { for (const o of obstacles) if (Math.hypot(x-o.x,z-o.z) < o.r + 2.0) return false; return true; }
+function safeSpawn() {
+  for (let k=0;k<600;k++) {
+    const r = rand(14,48), a = rand(0,Math.PI*2);
+    const x = Math.cos(a)*r + rand(-8,8), z = Math.sin(a)*r + rand(-8,8);
+    if (avoidSpawn(x,z)) return {x,z};
+  }
+  return {x:rand(-45,45), z:rand(-45,45)};
+}
+function makeSlots() {
+  const n = cfg.count, out = [];
+  if (cfg.formation === 'line') {
+    for (let i=0;i<n;i++) out.push({x:cfg.anchor.x + (i-(n-1)/2)*cfg.spacingX, z:cfg.anchor.z});
+  } else if (cfg.formation === 'wedge') {
+    let idx=0,row=0,rowCount=0;
+    while (idx<n) {
+      rowCount = Math.min(n-idx, 1 + row*2);
+      for (let j=0;j<rowCount;j++) { out.push({x:cfg.anchor.x + (j-(rowCount-1)/2)*cfg.spacingX, z:cfg.anchor.z + row*cfg.spacingZ}); idx++; if(idx>=n) break; }
+      row++;
+    }
+    const shift = row*cfg.spacingZ*0.42; for (const s of out) s.z -= shift;
+  } else {
+    const cols = Math.ceil(Math.sqrt(n*1.55)); const rows = Math.ceil(n/cols);
+    for (let i=0;i<n;i++) { const c=i%cols, r=Math.floor(i/cols); out.push({x:cfg.anchor.x + (c-(cols-1)/2)*cfg.spacingX, z:cfg.anchor.z + (r-(rows-1)/2)*cfg.spacingZ}); }
+  }
+  return out;
+}
+function rebuildSoldiers() {
+  soldiers = [];
+  cfg.count = Number(document.getElementById('count').value);
+  for (let i=0;i<cfg.count;i++) {
+    const p = safeSpawn();
+    soldiers.push({ id:i, isLeader:i===0, x:p.x, z:p.z, vx:rand(-.5,.5), vz:rand(-.5,.5), ax:0, az:0, heading:rand(-Math.PI,Math.PI), slotIndex:i, slotError:0, speed:0, phase:rand(0,Math.PI*2), discipline:rand(.82,1.18)*(i===0?1.15:1) });
+  }
+  slots = makeSlots(); lastAssign=99; assignSlots();
+}
+function scatter() { for (const s of soldiers) { const p=safeSpawn(); s.x=p.x; s.z=p.z; s.vx=rand(-.5,.5); s.vz=rand(-.5,.5); s.heading=rand(-Math.PI,Math.PI); } time=0; lastAssign=99; }
+function assignSlots() {
+  slots = makeSlots();
+  const unused = new Set(slots.map((_,i)=>i));
+  let leaderSlot = 0, bestScore = Infinity;
+  for (let i=0;i<slots.length;i++) { const localZ = slots[i].z - cfg.anchor.z, localX = slots[i].x - cfg.anchor.x; const score = localZ*1000 + Math.abs(localX); if (score < bestScore) { bestScore=score; leaderSlot=i; } }
+  soldiers[0].slotIndex = leaderSlot; unused.delete(leaderSlot);
+  const queue = soldiers.slice(1).map(s => ({s, d: dist2d(s, slots[s.slotIndex] || slots[0])})).sort((a,b)=>b.d-a.d);
+  for (const item of queue) {
+    let best = null, bestD = Infinity;
+    for (const idx of unused) { const dx=item.s.x-slots[idx].x, dz=item.s.z-slots[idx].z, d=dx*dx+dz*dz; if (d<bestD) { bestD=d; best=idx; } }
+    item.s.slotIndex = best; unused.delete(best);
+  }
+}
+function step(dt) {
+  time += dt; lastAssign += dt; if (lastAssign >= cfg.reassignPeriod) { assignSlots(); lastAssign = 0; }
+  slots = makeSlots();
+  for (const s of soldiers) {
+    s.ax=0; s.az=0;
+    const slot = slots[s.slotIndex] || cfg.anchor;
+    let tx = slot.x - s.x, tz = slot.z - s.z; const dSlot = Math.hypot(tx,tz); s.slotError = dSlot;
+    if (dSlot > .04) { const arrival = clamp(dSlot/7, .25, 1); tx/=dSlot; tz/=dSlot; s.ax += tx * cfg.slotPull * s.discipline * 3.3 * arrival; s.az += tz * cfg.slotPull * s.discipline * 3.3 * arrival; }
+    let sepX=0, sepZ=0, cohX=0, cohZ=0, aliX=0, aliZ=0, count=0;
+    for (const o of soldiers) {
+      if (o===s) continue; const dx=s.x-o.x, dz=s.z-o.z, d=Math.hypot(dx,dz);
+      if (d < cfg.neighborRadius && d > .0001) {
+        count++; cohX += o.x; cohZ += o.z; aliX += o.vx; aliZ += o.vz;
+        if (d < cfg.personalSpace) { const str = (cfg.personalSpace-d)/cfg.personalSpace; sepX += dx/d * str*str; sepZ += dz/d * str*str; }
+      }
+    }
+    if (count) {
+      cohX = cohX/count - s.x; cohZ = cohZ/count - s.z; const cd=Math.hypot(cohX,cohZ); if(cd>.0001){ cohX=cohX/cd*cfg.cohesion*1.3; cohZ=cohZ/cd*cfg.cohesion*1.3; }
+      aliX = aliX/count - s.vx; aliZ = aliZ/count - s.vz; const ad=Math.hypot(aliX,aliZ), maxA=cfg.alignment*1.4; if(ad>maxA && ad>.0001){ aliX=aliX/ad*maxA; aliZ=aliZ/ad*maxA; }
+      s.ax += cohX + aliX + sepX*cfg.separation*5.5; s.az += cohZ + aliZ + sepZ*cfg.separation*5.5;
+    }
+    for (const o of obstacles) {
+      if (o.kind === 'hill') continue;
+      const dx=s.x-o.x, dz=s.z-o.z, d=Math.hypot(dx,dz), ar=o.r+2.25;
+      if (d<ar && d>.0001) { const str=((ar-d)/ar)**2; s.ax += dx/d*cfg.obstacleAvoid*9*str; s.az += dz/d*cfg.obstacleAvoid*9*str; }
+    }
+    const bound=61; if(Math.abs(s.x)>bound) s.ax += -Math.sign(s.x)*5; if(Math.abs(s.z)>bound) s.az += -Math.sign(s.z)*5;
+  }
+  for (const s of soldiers) {
+    const aMag=Math.hypot(s.ax,s.az); if(aMag>cfg.maxForce){ s.ax=s.ax/aMag*cfg.maxForce; s.az=s.az/aMag*cfg.maxForce; }
+    s.vx += s.ax*dt; s.vz += s.az*dt; const damp=Math.pow(cfg.damping,dt); s.vx*=damp; s.vz*=damp;
+    const sp=Math.hypot(s.vx,s.vz), max=cfg.maxSpeed*(s.isLeader?1.04:1); if(sp>max){ s.vx=s.vx/sp*max; s.vz=s.vz/sp*max; }
+    s.x += s.vx*dt; s.z += s.vz*dt; s.speed = Math.hypot(s.vx,s.vz); s.phase += dt*(4.5+s.speed*2.3);
+    if(s.speed>.04){ const desired=Math.atan2(s.vx,s.vz); s.heading += clamp(angleDiff(desired,s.heading), -dt*5.5, dt*5.5); }
+  }
+}
+
+function strokeSeg(a,b,color,w,alpha=1) { const pa=project(a), pb=project(b); if(!pa||!pb) return; ctx.save(); ctx.globalAlpha=alpha; ctx.strokeStyle=color; ctx.lineWidth=Math.max(.6, ((pa.s+pb.s)*.5)*w); ctx.lineCap='round'; ctx.beginPath(); ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y); ctx.stroke(); ctx.restore(); }
+function fillPoly(points, color, alpha=1) { const ps=points.map(project); if(ps.some(p=>!p)) return; ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle=color; ctx.beginPath(); ctx.moveTo(ps[0].x,ps[0].y); for(let i=1;i<ps.length;i++) ctx.lineTo(ps[i].x,ps[i].y); ctx.closePath(); ctx.fill(); ctx.restore(); }
+function strokePoly(points, color, w=1, alpha=1) { const ps=points.map(project); if(ps.some(p=>!p)) return; ctx.save(); ctx.globalAlpha=alpha; ctx.strokeStyle=color; ctx.lineWidth=w; ctx.beginPath(); ctx.moveTo(ps[0].x,ps[0].y); for(let i=1;i<ps.length;i++) ctx.lineTo(ps[i].x,ps[i].y); ctx.closePath(); ctx.stroke(); ctx.restore(); }
+function circle3(p, rWorld, color, alpha=1, stroke=null) { const pp=project(p); if(!pp) return; ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle=color; ctx.beginPath(); ctx.arc(pp.x,pp.y,Math.max(.8, rWorld*pp.s),0,Math.PI*2); ctx.fill(); if(stroke){ ctx.strokeStyle=stroke; ctx.lineWidth=1; ctx.stroke(); } ctx.restore(); }
+function world(x,y,z){ return {x,y,z}; }
+function localPoint(s, right, fwd, rx, y, fz) { return { x:s.x + right.x*rx + fwd.x*fz, y, z:s.z + right.z*rx + fwd.z*fz }; }
+function drawSoldier(s) {
+  const fwd = {x:Math.sin(s.heading), z:Math.cos(s.heading)};
+  const right = {x:Math.cos(s.heading), z:-Math.sin(s.heading)};
+  const walk = clamp(s.speed/cfg.maxSpeed,0,1), swing=Math.sin(s.phase)*.25*walk, armSwing=-Math.sin(s.phase)*.20*walk;
+  const leader = s.isLeader;
+  const armor = leader ? '#d7b255' : '#979b9d', tunic = leader ? '#a23227' : '#8e2420', skin='#c8916c', leather='#4e3524', shield='#a82026', spear='#7a583a';
+  const hipL = localPoint(s,right,fwd,-.17,.92,0), hipR=localPoint(s,right,fwd,.17,.92,0);
+  const footL=localPoint(s,right,fwd,-.16,.06,-.04+swing), footR=localPoint(s,right,fwd,.16,.06,-.04-swing);
+  const kneeL=localPoint(s,right,fwd,-.17,.48,.02+swing*.55), kneeR=localPoint(s,right,fwd,.17,.48,.02-swing*.55);
+  strokeSeg(hipL,kneeL,leather,.15); strokeSeg(kneeL,footL,leather,.13); strokeSeg(hipR,kneeR,leather,.15); strokeSeg(kneeR,footR,leather,.13);
+  strokeSeg(localPoint(s,right,fwd,-.24,.88,-.01), localPoint(s,right,fwd,.24,.88,-.01), tunic,.34,.95);
+  const shL=localPoint(s,right,fwd,-.38,1.55,0), shR=localPoint(s,right,fwd,.38,1.55,0), waistL=localPoint(s,right,fwd,-.28,.94,0), waistR=localPoint(s,right,fwd,.28,.94,0);
+  fillPoly([shL,shR,waistR,waistL], armor,.96); strokePoly([shL,shR,waistR,waistL], 'rgba(0,0,0,.35)', 1, .6);
+  const handL=localPoint(s,right,fwd,-.47,.95,-.20+armSwing), handR=localPoint(s,right,fwd,.48,1.0,-.25-armSwing);
+  strokeSeg(shL,handL,skin,.13); strokeSeg(shR,handR,skin,.12);
+  // Shield plane on left/front side.
+  const shieldC = localPoint(s,right,fwd,-.56,1.05,-.34);
+  const shieldPts = [
+    {x:shieldC.x+right.x*(-.05), y:1.47, z:shieldC.z+right.z*(-.05)},
+    {x:shieldC.x+right.x*(-.05), y:.66, z:shieldC.z+right.z*(-.05)},
+    {x:shieldC.x+right.x*.42, y:.62, z:shieldC.z+right.z*.42},
+    {x:shieldC.x+right.x*.42, y:1.42, z:shieldC.z+right.z*.42}
+  ];
+  fillPoly(shieldPts, shield, .95); strokePoly(shieldPts, '#e9bf62', 1.4, .75);
+  // Spear held by right arm.
+  const spearBase = localPoint(s,right,fwd,.46,.95,-.18-armSwing);
+  const spearTip = localPoint(s,right,fwd,.46,1.32,-1.65-armSwing);
+  strokeSeg(spearBase,spearTip,spear,.06,.95); strokeSeg(spearTip, localPoint(s,right,fwd,.46,1.37,-1.82-armSwing), '#c9c9c9', .13,.95);
+  strokeSeg(world(s.x,1.0,s.z), world(s.x,1.63,s.z), armor,.38,.98);
+  const head = world(s.x,1.92,s.z); circle3(head,.23,skin,1,'rgba(0,0,0,.25)');
+  circle3(world(s.x,2.04,s.z), .24, armor, .95);
+  const crestTop = leader ? 2.52 : 2.34; strokeSeg(localPoint(s,right,fwd,-.04,2.14,0), localPoint(s,right,fwd,.04,crestTop,0), leader?'#e9bf62':tunic, leader?.19:.12, .98);
+  if (leader) {
+    strokeSeg(localPoint(s,right,fwd,.62,.1,.05), localPoint(s,right,fwd,.62,2.55,.05), '#8b6a45', .05, .9);
+    fillPoly([localPoint(s,right,fwd,.62,2.55,.05), localPoint(s,right,fwd,1.20,2.42,.05), localPoint(s,right,fwd,1.20,2.02,.05), localPoint(s,right,fwd,.62,2.15,.05)], '#e9bf62', .95);
+  }
+}
+function drawGrid() {
+  ctx.fillStyle = '#111318'; ctx.fillRect(0,0,innerWidth,innerHeight);
+  const grad = ctx.createLinearGradient(0,0,0,innerHeight); grad.addColorStop(0,'#151922'); grad.addColorStop(0.55,'#222b24'); grad.addColorStop(1,'#181a17'); ctx.fillStyle=grad; ctx.fillRect(0,0,innerWidth,innerHeight);
+  const bounds=65, step=5;
+  for(let v=-bounds;v<=bounds;v+=step){
+    strokeSeg(world(-bounds,0,v),world(bounds,0,v),v===0?'rgba(245,238,218,.30)':'rgba(245,238,218,.12)',.03,v===0?.7:.45);
+    strokeSeg(world(v,0,-bounds),world(v,0,bounds),v===0?'rgba(245,238,218,.30)':'rgba(245,238,218,.12)',.03,v===0?.7:.45);
+  }
+}
+function drawDisc(x,z,r,color,alpha=.8,segments=32) { const pts=[]; for(let i=0;i<segments;i++){ const a=i/segments*Math.PI*2; pts.push(world(x+Math.cos(a)*r,.015,z+Math.sin(a)*r)); } fillPoly(pts,color,alpha); }
+function drawCuboid(o) {
+  const sx=o.sx||4, sz=o.sz||4, h=2.3, rot=o.rot||0, c=Math.cos(rot), s=Math.sin(rot);
+  const corners=[]; for(const yy of [0,h]) for(const [lx,lz] of [[-sx/2,-sz/2],[sx/2,-sz/2],[sx/2,sz/2],[-sx/2,sz/2]]) corners.push(world(o.x + lx*c - lz*s, yy, o.z + lx*s + lz*c));
+  const faces = [[0,1,2,3,'#6b6356'],[4,7,6,5,'#807769'],[0,4,5,1,'#5a5349'],[1,5,6,2,'#645c50'],[2,6,7,3,'#4e493f'],[3,7,4,0,'#70675b']];
+  const drawable = faces.map(f => ({f, depth:f.slice(0,4).reduce((a,i)=>a+(project(corners[i])?.z||0),0)/4})).sort((a,b)=>b.depth-a.depth);
+  for(const it of drawable) fillPoly(it.f.slice(0,4).map(i=>corners[i]), it.f[4], .98);
+}
+function drawTerrain() {
+  for (const o of obstacles) {
+    if(o.kind==='hill') { drawDisc(o.x,o.z,o.r,'#596545',.82,40); drawDisc(o.x,o.z,o.r*.58,'#6b754c',.62,32); }
+    else if(o.kind==='rock') { drawDisc(o.x,o.z,o.r,'#4c4b46',.8,18); circle3(world(o.x,.55,o.z),o.r*.34,'#68655d',.95); }
+    else if(o.kind==='ruin') drawCuboid(o);
+  }
+}
+function drawSlots() {
+  slots = makeSlots();
+  if(!cfg.debug) return;
+  for (const sl of slots) drawDisc(sl.x, sl.z, .28, '#e9bf62', .30, 16);
+  for (let i=0;i<Math.min(36,soldiers.length);i++) {
+    const s=soldiers[i], sl=slots[s.slotIndex]; if(!sl) continue;
+    strokeSeg(world(s.x,.1,s.z), world(sl.x,.1,sl.z), '#8fd0ff', .025, .35);
+  }
+}
+function drawAnchor() {
+  drawDisc(cfg.anchor.x,cfg.anchor.z,2.4,'#93c5fd',.13,48);
+  drawDisc(cfg.anchor.x,cfg.anchor.z,.24,'#93c5fd',.85,20);
+  strokeSeg(world(cfg.anchor.x,.03,cfg.anchor.z), world(cfg.anchor.x,3.1,cfg.anchor.z), '#8b6a45', .06, .9);
+  fillPoly([world(cfg.anchor.x,3.08,cfg.anchor.z), world(cfg.anchor.x+1.7,2.86,cfg.anchor.z), world(cfg.anchor.x+1.7,2.35,cfg.anchor.z), world(cfg.anchor.x,2.56,cfg.anchor.z)], '#e9bf62', .9);
+}
+function render() {
+  updateCamera(); drawGrid(); drawTerrain(); drawSlots(); drawAnchor();
+  const sorted = soldiers.map(s=>({s, p:project(world(s.x,0,s.z))})).filter(o=>o.p).sort((a,b)=>b.p.z-a.p.z);
+  for (const item of sorted) drawSoldier(item.s);
+}
+function updateHud() {
+  let mean=0, formed=0, sp=0, cx=0, cz=0; for(const s of soldiers){ mean+=s.slotError; sp+=s.speed; cx+=s.x; cz+=s.z; if(s.slotError<.85) formed++; }
+  mean/=soldiers.length; sp/=soldiers.length; cx/=soldiers.length; cz/=soldiers.length; let rad=0; for(const s of soldiers) rad += Math.hypot(s.x-cx,s.z-cz); rad/=soldiers.length;
+  document.getElementById('meanErr').textContent = mean.toFixed(2)+' m';
+  document.getElementById('formed').textContent = Math.round(100*formed/soldiers.length)+'%';
+  document.getElementById('radius').textContent = rad.toFixed(1)+' m';
+  document.getElementById('avgSpeed').textContent = sp.toFixed(2)+' m/s';
+  document.getElementById('status').textContent = cfg.paused ? 'paused' : (mean < 1.1 ? 'formed' : 'forming');
+}
+function setTargetFromClick(x,y) { const p=pickGround(x,y); if(!p) return; let ax=clamp(p.x,-45,45), az=clamp(p.z,-45,45); for(const o of obstacles){ if(o.kind==='hill') continue; const d=Math.hypot(ax-o.x,az-o.z); if(d<o.r+5){ const nx=(ax-o.x)/(d||1), nz=(az-o.z)/(d||1); ax=o.x+nx*(o.r+5); az=o.z+nz*(o.r+5); } } cfg.anchor.x=ax; cfg.anchor.z=az; lastAssign=99; }
+
+let dragging=false, lastX=0, lastY=0, armed=false;
+canvas.addEventListener('pointerdown', e=>{ dragging=true; lastX=e.clientX; lastY=e.clientY; canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener('pointermove', e=>{ if(!dragging) return; const dx=e.clientX-lastX, dy=e.clientY-lastY; lastX=e.clientX; lastY=e.clientY; camera.yaw -= dx*.006; camera.pitch = clamp(camera.pitch + dy*.004, .16, 1.18); });
+canvas.addEventListener('pointerup', e=>{ dragging=false; try{canvas.releasePointerCapture(e.pointerId);}catch{} if(armed){ setTargetFromClick(e.clientX,e.clientY); armed=false; document.getElementById('moveTarget').textContent='Move target'; } });
+canvas.addEventListener('dblclick', e=>setTargetFromClick(e.clientX,e.clientY));
+canvas.addEventListener('wheel', e=>{ e.preventDefault(); camera.dist=clamp(camera.dist*Math.exp(e.deltaY*.001),18,110); }, {passive:false});
+function bindRange(id,key,out,fmt=(v)=>Number(v).toFixed(2)) { const el=document.getElementById(id), oo=document.getElementById(out); const f=()=>{cfg[key]=Number(el.value); oo.textContent=fmt(el.value);}; el.addEventListener('input',f); f(); }
+bindRange('slotPull','slotPull','slotOut'); bindRange('separation','separation','sepOut'); bindRange('cohesion','cohesion','cohOut'); bindRange('alignment','alignment','alignOut'); bindRange('timeScale','timeScale','timeOut',v=>Number(v).toFixed(1)+'×');
+document.getElementById('debug').addEventListener('change',e=>cfg.debug=e.target.checked);
+document.getElementById('pause').onclick=()=>{ cfg.paused=!cfg.paused; document.getElementById('pause').textContent=cfg.paused?'Resume':'Pause'; };
+document.getElementById('scatter').onclick=scatter;
+document.getElementById('line').onclick=()=>{ cfg.formation='line'; lastAssign=99; };
+document.getElementById('block').onclick=()=>{ cfg.formation='block'; lastAssign=99; };
+document.getElementById('wedge').onclick=()=>{ cfg.formation='wedge'; lastAssign=99; };
+document.getElementById('moveTarget').onclick=()=>{ armed=true; document.getElementById('moveTarget').textContent='Click ground…'; };
+document.getElementById('count').addEventListener('input',e=>document.getElementById('countOut').textContent=e.target.value);
+document.getElementById('count').addEventListener('change',rebuildSoldiers);
+addEventListener('keydown', e=>{ if(e.key===' '){ e.preventDefault(); document.getElementById('pause').click(); } if(e.key.toLowerCase()==='r') scatter(); if(e.key.toLowerCase()==='l') cfg.formation='line'; if(e.key.toLowerCase()==='b') cfg.formation='block'; if(e.key.toLowerCase()==='w') cfg.formation='wedge'; });
+rebuildSoldiers();
+let last = performance.now();
+function loop(now) { requestAnimationFrame(loop); const dt = Math.min(.05,(now-last)/1000); last=now; if(!cfg.paused) step(dt*cfg.timeScale); render(); updateHud(); }
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
