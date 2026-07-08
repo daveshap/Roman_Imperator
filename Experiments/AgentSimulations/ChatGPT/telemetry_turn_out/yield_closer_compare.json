@@ -1,0 +1,768 @@
+{
+  "summary": {
+    "baseline_all": {
+      "n": 24,
+      "avg_fight": 24.833333333333332,
+      "avg_swaps": 4.5,
+      "arrive_rate": 0.9583333333333334
+    },
+    "right_hand_all": {
+      "n": 24,
+      "avg_fight": 7.5,
+      "avg_swaps": 0.0,
+      "arrive_rate": 1.0
+    },
+    "closer_keeps_all": {
+      "n": 24,
+      "avg_fight": 12.0,
+      "avg_swaps": 0.0,
+      "arrive_rate": 0.0
+    },
+    "baseline_a_closer": {
+      "n": 12,
+      "avg_fight": 34.416666666666664,
+      "avg_swaps": 6.833333333333333,
+      "arrive_rate": 0.9166666666666666
+    },
+    "closer_keeps_a_closer": {
+      "n": 12,
+      "avg_fight": 0.0,
+      "avg_swaps": 0.0,
+      "arrive_rate": 0.0
+    },
+    "baseline_equal": {
+      "n": 12,
+      "avg_fight": 15.25,
+      "avg_swaps": 2.1666666666666665,
+      "arrive_rate": 1.0
+    },
+    "closer_keeps_equal": {
+      "n": 12,
+      "avg_fight": 24.0,
+      "avg_swaps": 0.0,
+      "arrive_rate": 0.0
+    }
+  },
+  "rows": [
+    {
+      "policy": "baseline",
+      "seed": 0,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 2,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.39418035715671
+    },
+    {
+      "policy": "baseline",
+      "seed": 0,
+      "a_closer": false,
+      "fight_frames": 24,
+      "swaps": 2,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 7.0348060919701885
+    },
+    {
+      "policy": "right_hand",
+      "seed": 0,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.4391409229907564
+    },
+    {
+      "policy": "right_hand",
+      "seed": 0,
+      "a_closer": false,
+      "fight_frames": 15,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 7.034841821987885
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 0,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": false,
+      "final_dist": 1.5929634959998544
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 0,
+      "a_closer": false,
+      "fight_frames": 24,
+      "swaps": 0,
+      "a_arrived": false,
+      "b_arrived": false,
+      "final_dist": 2.3498683989888063
+    },
+    {
+      "policy": "baseline",
+      "seed": 1,
+      "a_closer": true,
+      "fight_frames": 59,
+      "swaps": 18,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.0648035716681745
+    },
+    {
+      "policy": "baseline",
+      "seed": 1,
+      "a_closer": false,
+      "fight_frames": 43,
+      "swaps": 9,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 6.967274425862515
+    },
+    {
+      "policy": "right_hand",
+      "seed": 1,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.4391409229907564
+    },
+    {
+      "policy": "right_hand",
+      "seed": 1,
+      "a_closer": false,
+      "fight_frames": 15,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 7.034841821987885
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 1,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": false,
+      "final_dist": 1.5929634959998544
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 1,
+      "a_closer": false,
+      "fight_frames": 24,
+      "swaps": 0,
+      "a_arrived": false,
+      "b_arrived": false,
+      "final_dist": 2.3498683989888063
+    },
+    {
+      "policy": "baseline",
+      "seed": 2,
+      "a_closer": true,
+      "fight_frames": 1,
+      "swaps": 3,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.399290515189271
+    },
+    {
+      "policy": "baseline",
+      "seed": 2,
+      "a_closer": false,
+      "fight_frames": 28,
+      "swaps": 3,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 7.021951839291137
+    },
+    {
+      "policy": "right_hand",
+      "seed": 2,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.4391409229907564
+    },
+    {
+      "policy": "right_hand",
+      "seed": 2,
+      "a_closer": false,
+      "fight_frames": 15,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 7.034841821987885
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 2,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": false,
+      "final_dist": 1.5929634959998544
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 2,
+      "a_closer": false,
+      "fight_frames": 24,
+      "swaps": 0,
+      "a_arrived": false,
+      "b_arrived": false,
+      "final_dist": 2.3498683989888063
+    },
+    {
+      "policy": "baseline",
+      "seed": 3,
+      "a_closer": true,
+      "fight_frames": 30,
+      "swaps": 4,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.420137417704538
+    },
+    {
+      "policy": "baseline",
+      "seed": 3,
+      "a_closer": false,
+      "fight_frames": 5,
+      "swaps": 1,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 7.000150407885433
+    },
+    {
+      "policy": "right_hand",
+      "seed": 3,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.4391409229907564
+    },
+    {
+      "policy": "right_hand",
+      "seed": 3,
+      "a_closer": false,
+      "fight_frames": 15,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 7.034841821987885
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 3,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": false,
+      "final_dist": 1.5929634959998544
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 3,
+      "a_closer": false,
+      "fight_frames": 24,
+      "swaps": 0,
+      "a_arrived": false,
+      "b_arrived": false,
+      "final_dist": 2.3498683989888063
+    },
+    {
+      "policy": "baseline",
+      "seed": 4,
+      "a_closer": true,
+      "fight_frames": 7,
+      "swaps": 6,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.384781518790702
+    },
+    {
+      "policy": "baseline",
+      "seed": 4,
+      "a_closer": false,
+      "fight_frames": 19,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 7.028616749982734
+    },
+    {
+      "policy": "right_hand",
+      "seed": 4,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.4391409229907564
+    },
+    {
+      "policy": "right_hand",
+      "seed": 4,
+      "a_closer": false,
+      "fight_frames": 15,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 7.034841821987885
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 4,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": false,
+      "final_dist": 1.5929634959998544
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 4,
+      "a_closer": false,
+      "fight_frames": 24,
+      "swaps": 0,
+      "a_arrived": false,
+      "b_arrived": false,
+      "final_dist": 2.3498683989888063
+    },
+    {
+      "policy": "baseline",
+      "seed": 5,
+      "a_closer": true,
+      "fight_frames": 54,
+      "swaps": 11,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.3873960925340225
+    },
+    {
+      "policy": "baseline",
+      "seed": 5,
+      "a_closer": false,
+      "fight_frames": 5,
+      "swaps": 1,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 7.000150407885433
+    },
+    {
+      "policy": "right_hand",
+      "seed": 5,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.4391409229907564
+    },
+    {
+      "policy": "right_hand",
+      "seed": 5,
+      "a_closer": false,
+      "fight_frames": 15,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 7.034841821987885
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 5,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": false,
+      "final_dist": 1.5929634959998544
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 5,
+      "a_closer": false,
+      "fight_frames": 24,
+      "swaps": 0,
+      "a_arrived": false,
+      "b_arrived": false,
+      "final_dist": 2.3498683989888063
+    },
+    {
+      "policy": "baseline",
+      "seed": 6,
+      "a_closer": true,
+      "fight_frames": 47,
+      "swaps": 4,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.3528140454406774
+    },
+    {
+      "policy": "baseline",
+      "seed": 6,
+      "a_closer": false,
+      "fight_frames": 3,
+      "swaps": 1,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 7.000136305902478
+    },
+    {
+      "policy": "right_hand",
+      "seed": 6,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.4391409229907564
+    },
+    {
+      "policy": "right_hand",
+      "seed": 6,
+      "a_closer": false,
+      "fight_frames": 15,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 7.034841821987885
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 6,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": false,
+      "final_dist": 1.5929634959998544
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 6,
+      "a_closer": false,
+      "fight_frames": 24,
+      "swaps": 0,
+      "a_arrived": false,
+      "b_arrived": false,
+      "final_dist": 2.3498683989888063
+    },
+    {
+      "policy": "baseline",
+      "seed": 7,
+      "a_closer": true,
+      "fight_frames": 58,
+      "swaps": 9,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.4382423970417815
+    },
+    {
+      "policy": "baseline",
+      "seed": 7,
+      "a_closer": false,
+      "fight_frames": 7,
+      "swaps": 1,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 6.999348103895621
+    },
+    {
+      "policy": "right_hand",
+      "seed": 7,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.4391409229907564
+    },
+    {
+      "policy": "right_hand",
+      "seed": 7,
+      "a_closer": false,
+      "fight_frames": 15,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 7.034841821987885
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 7,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": false,
+      "final_dist": 1.5929634959998544
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 7,
+      "a_closer": false,
+      "fight_frames": 24,
+      "swaps": 0,
+      "a_arrived": false,
+      "b_arrived": false,
+      "final_dist": 2.3498683989888063
+    },
+    {
+      "policy": "baseline",
+      "seed": 8,
+      "a_closer": true,
+      "fight_frames": 15,
+      "swaps": 1,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.4011506984316275
+    },
+    {
+      "policy": "baseline",
+      "seed": 8,
+      "a_closer": false,
+      "fight_frames": 15,
+      "swaps": 1,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 6.962349466853434
+    },
+    {
+      "policy": "right_hand",
+      "seed": 8,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.4391409229907564
+    },
+    {
+      "policy": "right_hand",
+      "seed": 8,
+      "a_closer": false,
+      "fight_frames": 15,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 7.034841821987885
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 8,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": false,
+      "final_dist": 1.5929634959998544
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 8,
+      "a_closer": false,
+      "fight_frames": 24,
+      "swaps": 0,
+      "a_arrived": false,
+      "b_arrived": false,
+      "final_dist": 2.3498683989888063
+    },
+    {
+      "policy": "baseline",
+      "seed": 9,
+      "a_closer": true,
+      "fight_frames": 71,
+      "swaps": 13,
+      "a_arrived": false,
+      "b_arrived": false,
+      "final_dist": 1.0951633890960024
+    },
+    {
+      "policy": "baseline",
+      "seed": 9,
+      "a_closer": false,
+      "fight_frames": 3,
+      "swaps": 1,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 7.000136305902478
+    },
+    {
+      "policy": "right_hand",
+      "seed": 9,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.4391409229907564
+    },
+    {
+      "policy": "right_hand",
+      "seed": 9,
+      "a_closer": false,
+      "fight_frames": 15,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 7.034841821987885
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 9,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": false,
+      "final_dist": 1.5929634959998544
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 9,
+      "a_closer": false,
+      "fight_frames": 24,
+      "swaps": 0,
+      "a_arrived": false,
+      "b_arrived": false,
+      "final_dist": 2.3498683989888063
+    },
+    {
+      "policy": "baseline",
+      "seed": 10,
+      "a_closer": true,
+      "fight_frames": 48,
+      "swaps": 7,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.3642325467620475
+    },
+    {
+      "policy": "baseline",
+      "seed": 10,
+      "a_closer": false,
+      "fight_frames": 12,
+      "swaps": 3,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 6.986953774749162
+    },
+    {
+      "policy": "right_hand",
+      "seed": 10,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.4391409229907564
+    },
+    {
+      "policy": "right_hand",
+      "seed": 10,
+      "a_closer": false,
+      "fight_frames": 15,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 7.034841821987885
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 10,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": false,
+      "final_dist": 1.5929634959998544
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 10,
+      "a_closer": false,
+      "fight_frames": 24,
+      "swaps": 0,
+      "a_arrived": false,
+      "b_arrived": false,
+      "final_dist": 2.3498683989888063
+    },
+    {
+      "policy": "baseline",
+      "seed": 11,
+      "a_closer": true,
+      "fight_frames": 23,
+      "swaps": 4,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.4113065821947246
+    },
+    {
+      "policy": "baseline",
+      "seed": 11,
+      "a_closer": false,
+      "fight_frames": 19,
+      "swaps": 3,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 6.980329632125264
+    },
+    {
+      "policy": "right_hand",
+      "seed": 11,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 2.4391409229907564
+    },
+    {
+      "policy": "right_hand",
+      "seed": 11,
+      "a_closer": false,
+      "fight_frames": 15,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": true,
+      "final_dist": 7.034841821987885
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 11,
+      "a_closer": true,
+      "fight_frames": 0,
+      "swaps": 0,
+      "a_arrived": true,
+      "b_arrived": false,
+      "final_dist": 1.5929634959998544
+    },
+    {
+      "policy": "closer_keeps",
+      "seed": 11,
+      "a_closer": false,
+      "fight_frames": 24,
+      "swaps": 0,
+      "a_arrived": false,
+      "b_arrived": false,
+      "final_dist": 2.3498683989888063
+    }
+  ]
+}

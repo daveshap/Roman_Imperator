@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Self-Assembling 3D ABM v9 — solid checkpoint (drill standards + form-up)</title>
+<title>Self-Assembling 3D ABM v12 — local nearest-free seats (no telepathy)</title>
 <style>
   :root { color-scheme: dark; --panel: rgba(11,13,17,.84); --line: rgba(255,255,255,.13); --text:#f4efe3; --muted:#bbb4a6; --gold:#e9bf62; --blue:#8fd0ff; }
   html, body { margin:0; width:100%; height:100%; overflow:hidden; background:#101217; color:var(--text); font-family:Inter, ui-sans-serif, system-ui, sans-serif; }
@@ -40,7 +40,7 @@
 <div id="hud">
   <header>
     <h1>Self-assembling ABM <span class="pill" id="status">forming</span></h1>
-    <p>v9 checkpoint: mental slots, musical chairs, traffic, combat/practice/parade standards, on-post facing fix. Solid working drill.</p>
+    <p>v12: local free posts + congestion — avoid pile-ups on the same nearest empty seat; stuck men re-pick clearer flanks.</p>
   </header>
   <div class="section">
     <div class="buttons">
@@ -75,7 +75,7 @@
     <div class="mini" id="drillDesc">Practice field: balance of speed and order (default).</div>
   </div>
   <div class="section">
-    <div class="row"><label>Soldiers</label><input id="count" type="range" min="20" max="180" step="5" value="80"><output id="countOut">80</output></div>
+    <div class="row"><label>Soldiers</label><input id="count" type="range" min="20" max="600" step="5" value="80"><output id="countOut">80</output></div>
     <div class="row"><label>Grid spacing</label><input id="spacing" type="range" min="0.95" max="2.4" step="0.05" value="1.55"><output id="spacingOut">1.55</output></div>
     <div class="row"><label>Rect aspect</label><input id="rectAspect" type="range" min="1.4" max="4.0" step="0.1" value="2.6"><output id="aspectOut">2.6</output></div>
     <div class="row"><label>Body radius</label><input id="bodyRadius" type="range" min="0.25" max="0.75" step="0.01" value="0.48"><output id="bodyOut">0.48</output></div>
@@ -85,7 +85,8 @@
     <div class="row"><label>Sense radius</label><input id="neighborRadius" type="range" min="5" max="34" step="0.5" value="18"><output id="senseOut">18</output></div>
     <div class="row"><label>Time scale</label><input id="timeScale" type="range" min="0.1" max="3.0" step="0.1" value="1.0"><output id="timeOut">1.0×</output></div>
     <div class="checkrow">
-      <label class="mini"><input id="mentalModel" type="checkbox" checked> mental archetype (particle slots)</label>
+      <label class="mini"><input id="mentalModel" type="checkbox" checked> seats: nearest free post (musical chairs)</label>
+      <label class="mini"><input id="pathing" type="checkbox" checked> open-lane pathing (around stationary)</label>
       <label class="mini"><input id="showTargets" type="checkbox"> show believed spots</label>
       <label class="mini"><input id="links" type="checkbox"> neighbor links</label>
       <label class="mini"><input id="analysisLine" type="checkbox"> analysis footprint</label>
@@ -93,9 +94,9 @@
       <label class="mini"><input id="showStates" type="checkbox" checked> FSM discs</label>
     </div>
     <div class="note">
-      <b>Mental model:</b> lattice archetype + particle-filter “my slot,” then walk there.
-      <b>Drill standards:</b> COMBAT = fastest / loosest · PRACTICE = balanced · PARADE = tightest / slowest.
-      Tweaks arrive/lock tolerances, claim timeout, traffic bubble, form pressure, solid gates.
+      <b>Seats (v12):</b> shared order = lattice + command post. Each man picks <i>nearest free</i> seat and commits;
+      free = no body already on that post. If taken first → next free. No PF, no global claim auction.
+      <b>Drill:</b> on-post dress only. <b>Traffic:</b> march vs dress (v11).
     </div>
     <div class="fsmLegend">
       <span><i style="background:#5ad4a0"></i>solid/hold <b id="nHold">0</b></span>
@@ -122,7 +123,7 @@
     <div class="stat"><div class="label">camera</div><div class="value" id="camMode">orbit</div></div>
   </div>
 </div>
-<div id="tip"><b>v9:</b> form-up + pass etiquette: right-hand peel, and <b>closer-to-own-seat has right-of-way</b> (farther man yields/recasts). Stops brief mutual-juke when one is obviously nearer his post.</div>
+<div id="tip"><b>v12:</b> Local musical chairs — free = no body on post. Picks prefer <b>clear</b> free posts (body congestion), not pure nearest (that caused terminal pile-ups). Stuck / no progress or crowded free posts → re-pick emptier flanks. No claim telepathy. March/dress traffic kept.</div>
 <script>
 (() => {
 'use strict';
@@ -164,9 +165,13 @@ const LOCO = {
   yawCoupling: 2.8,     // how fast velocity direction follows body while moving
   latDampen: 3.5,       // bleed pure sideways slide when not intended
   stopSpeed: 0.06,      // below this, snap rest
-  // Traffic / room-to-move (soft bubble while traveling — hard contact is still bodyR*2)
-  travelBubble: 2.05,   // prefer ≥ this spacing when on the move
-  travelSepGain: 2.4,   // strength of soft travel repulsion
+  // Traffic / room-to-move
+  // MARCH = far from seat (shared across drills — MUST NOT inherit parade dress)
+  // DRESS = near seat (drill may tighten: parade wants more room while settling)
+  marchBubble: 1.55,    // body clearance while relocating mid-field
+  marchSepGain: 1.55,   // soft push while marching
+  travelBubble: 2.05,   // dress-phase bubble near post (drill may raise)
+  travelSepGain: 2.4,   // dress-phase gain near post
   holdBubble: 0.0,      // no extra bubble once planted (formation packs tight)
   jamSpeedFrac: 0.38,   // actual/intent below this counts as jammed
   jamTime: 0.65,        // seconds jammed → divert
@@ -187,20 +192,19 @@ const cfg = {
   personalSpace:1.35, depthBand:3.0, neighborRadius:18,
   obstacleAvoid:1.55, paused:false, timeScale:1.0,
   links:false, analysisLine:false, showBodies:false, showStates:true,
-  mentalModel:true, showTargets:false,
+  mentalModel:true, showTargets:false, pathing:true,
   followCenter:false, collisionIters:4, worldBound:62,
   drillStandard:'practice',
   // solid/bond gates (overwritten by drill presets)
   solidScoreMin:0.52, localQMin:0.42, shapeGateBase:0.48, shapeGateNear:0.40, socialQMin:0.25
 };
 
-/** Mental archetype / particle-filter slot belief (per-soldier “where do I belong?”). */
+/**
+ * Seat mind — LOCAL musical chairs (v12).
+ * Shared order only: lattice shape + command-post origin.
+ * Per man: commit to nearest free post; re-pick only when that post is taken.
+ */
 const MIND = {
-  nParticles: 18,
-  jumpProb: 0.14,
-  jumpProbLocked: 0.0,
-  sigmaScale: 1.35,
-  occPenalty: 1.55,
   planGain: 0.34,
   localBlend: 0.14,
   arriveFrac: 0.30,
@@ -208,20 +212,103 @@ const MIND = {
   unlockFrac: 1.20,
   deadzoneFrac: 0.26,
   settleHold: 0.55,
-  frameAlpha: 0.07,
-  freezeNearFrac: 0.55,
-  freezeShapeQ: 0.62,
-  claimTimeout: 2.2,
-  seatedFrac: 0.34,
+  frameAlpha: 0.12,      // only used briefly before freeze
+  freezeNearFrac: 0.40,
+  freezeShapeQ: 0.45,
+  freezeAge: 2.5,        // hard-freeze command post after this many seconds
+  seatedFrac: 0.34,      // body within this × spacing = "on the post" (observable)
   turnSnap: 1.1,
-  // Hallway-dance / mutual-juke fixes
-  passRightHand: true,   // peel right of heading when neighbor ahead
-  swapBreakId: true,     // break mutual seat-swap / cross-path
-  // Priority: who is closer to THEIR own seat keeps path (not lower id alone)
+  // Yield only if I can SEE a closer man almost on MY post (local, not claim auction)
+  seeYield: true,
+  seeYieldFrac: 0.55,    // they must be within this × my remaining distance
+  // Terminal jam fix: free posts that are *crowded* score worse (bodies near post, observable)
+  congWeight: 1.15,      // meters of distance-equivalent per body near a free post
+  congRadius: 1.45,      // × spacing: count bodies within this of post as congestion
+  stuckRepick: 0.95,     // seconds of no progress toward post → re-pick freer post
+  stuckCongBoost: 1.85,  // heavier congestion penalty when re-picking after stuck
+  crowdYieldN: 2,        // if this many bodies near my free post and I'm not closest → yield
+  // Traffic (v11) — not seat telepathy
+  passRightHand: true,
   closerPriority: true,
-  closerRatio: 0.88,     // A has priority if A.slotDist <= B.slotDist * this
-  yieldPeel: 2.4         // farther man peels harder while yielding
+  closerRatio: 0.88,
+  yieldPeel: 2.4,
+  farPriorityId: true,
+  farSlotFrac: 3.2,
+  dressSlotFrac: 1.4,
+  headHysteresis: 0.55,
+  headBlendFar: 0.28,
+  // Local open-lane pathing
+  pathing: true,
+  pathLook: 6.5,
+  pathBlend: 0.72,
+  pathDirectBias: 0.55,
+  pathRightBias: 0.12,
+  pathStillCost: 3.2,
+  pathMoveCost: 1.15,
+  pathMinGoal: 0.85,
+  pathCell: 2.2,         // spatial hash cell (m); shared by pathing + sense + collisions
+  pathQueryR: 5.5,       // only test blockers within this of agent
+  pathClearThresh: 2.4,  // direct-ray score above this → skip detour samples
+  pathInterval: 0.28,    // repath at most this often (s); staggered by id
+  pathOffsBlocked: null  // filled below: detour angles when direct blocked
 };
+MIND.pathOffsBlocked = [0.40, -0.40, 0.85, -0.85, 1.25];
+
+/**
+ * Spatial hash — rebuilt once (or per collision iter). All local queries are O(neighbors)
+ * not O(N). Integer keys avoid string allocs. Scales toward multi-thousand troops.
+ */
+let spatialGrid = { cell: 2.2, inv: 1/2.2, map: new Map() };
+function gridKey(ix, iz){ return ((ix + 8192) << 14) | (iz + 8192); }
+function rebuildSpatialGrid(cellSize){
+  const cell = cellSize || MIND.pathCell || 2.2;
+  const inv = 1 / cell;
+  const map = new Map();
+  const list = soldiers;
+  for(let i = 0; i < list.length; i++){
+    const s = list[i];
+    const ix = Math.floor(s.x * inv), iz = Math.floor(s.z * inv);
+    const k = gridKey(ix, iz);
+    let bucket = map.get(k);
+    if(!bucket){ bucket = []; map.set(k, bucket); }
+    bucket.push(s);
+  }
+  spatialGrid = { cell, inv, map };
+}
+/** Agents in cells overlapping the query disc (slightly over-inclusive — caller filters). */
+function queryNearbyAgents(sx, sz, radius){
+  const cell = spatialGrid.cell, inv = spatialGrid.inv, map = spatialGrid.map;
+  const r = Math.ceil(radius * inv);
+  const ix0 = Math.floor(sx * inv), iz0 = Math.floor(sz * inv);
+  const out = [];
+  for(let ix = ix0 - r; ix <= ix0 + r; ix++){
+    for(let iz = iz0 - r; iz <= iz0 + r; iz++){
+      const bucket = map.get(gridKey(ix, iz));
+      if(bucket){
+        for(let i = 0; i < bucket.length; i++) out.push(bucket[i]);
+      }
+    }
+  }
+  return out;
+}
+/** Fill preallocated array (reuse to cut GC at high N). Returns count. */
+function queryNearbyAgentsInto(sx, sz, radius, out){
+  const cell = spatialGrid.cell, inv = spatialGrid.inv, map = spatialGrid.map;
+  const r = Math.ceil(radius * inv);
+  const ix0 = Math.floor(sx * inv), iz0 = Math.floor(sz * inv);
+  let n = 0;
+  for(let ix = ix0 - r; ix <= ix0 + r; ix++){
+    for(let iz = iz0 - r; iz <= iz0 + r; iz++){
+      const bucket = map.get(gridKey(ix, iz));
+      if(!bucket) continue;
+      for(let i = 0; i < bucket.length; i++) out[n++] = bucket[i];
+    }
+  }
+  return n;
+}
+// Scratch buffers (avoid per-agent allocs); grow as needed for dense packs
+const _nearScratch = new Array(1024);
+const _pairScratch = new Array(256);
 
 /**
  * Drill standards: batch-set tolerances (slot precision, settle, traffic, pressure).
@@ -239,14 +326,15 @@ const DRILL = {
       solidScoreMin: 0.42, localQMin: 0.32, shapeGateBase: 0.36, shapeGateNear: 0.30, socialQMin: 0.15
     },
     mind: {
-      planGain: 0.42, localBlend: 0.10, jumpProb: 0.18,
+      planGain: 0.42, localBlend: 0.10,
       arriveFrac: 0.48, lockFrac: 0.55, unlockFrac: 1.45, deadzoneFrac: 0.40,
-      settleHold: 0.28, claimTimeout: 1.35, seatedFrac: 0.48, turnSnap: 0.75,
-      freezeNearFrac: 0.42, freezeShapeQ: 0.48, frameAlpha: 0.12, sigmaScale: 1.55, occPenalty: 1.25
+      settleHold: 0.28, seatedFrac: 0.48, turnSnap: 0.75,
+      freezeNearFrac: 0.42, freezeShapeQ: 0.48, frameAlpha: 0.15, freezeAge: 1.8
     },
     loco: {
       moveCommit: 0.55, holdEnter: 0.40, holdExit: 0.70, adjustEnter: 1.15, solidBreak: 1.25,
       faceAlignDeg: 22, moveAlignDeg: 28,
+      // dress-phase only (near seat). March bubble is shared — not set here.
       travelBubble: 1.55, travelSepGain: 1.6, jamTime: 0.45, jamSteer: 3.2,
       forwardRun: 4.2, accelWalk: 5.8, accelRun: 4.0, brakeRun: 3.2, brakeTurn: 2.2
     }
@@ -260,38 +348,40 @@ const DRILL = {
       solidScoreMin: 0.58, localQMin: 0.50, shapeGateBase: 0.58, shapeGateNear: 0.50, socialQMin: 0.28
     },
     mind: {
-      planGain: 0.38, localBlend: 0.16, jumpProb: 0.09,
+      planGain: 0.38, localBlend: 0.16,
       arriveFrac: 0.18, lockFrac: 0.22, unlockFrac: 1.00, deadzoneFrac: 0.14,
-      settleHold: 0.85, claimTimeout: 3.0, seatedFrac: 0.24, turnSnap: 1.45,
-      freezeNearFrac: 0.65, freezeShapeQ: 0.70, frameAlpha: 0.045, sigmaScale: 1.18, occPenalty: 1.75
+      settleHold: 0.85, seatedFrac: 0.24, turnSnap: 1.45,
+      freezeNearFrac: 0.55, freezeShapeQ: 0.58, frameAlpha: 0.10, freezeAge: 2.5
     },
     loco: {
       moveCommit: 0.34, holdEnter: 0.20, holdExit: 0.42, adjustEnter: 0.72, solidBreak: 0.75,
       faceAlignDeg: 8, moveAlignDeg: 15,
-      travelBubble: 2.20, travelSepGain: 2.7, jamTime: 0.55, jamSteer: 2.5,
+      // dress near post only — mid-field uses marchBubble (shared)
+      travelBubble: 2.05, travelSepGain: 2.4, jamTime: 0.55, jamSteer: 2.5,
       forwardRun: 3.4, accelWalk: 4.4, accelRun: 3.0, brakeRun: 3.2, brakeTurn: 1.9
     }
   },
-  // Parade: much stricter than before — inspection-grade lattice, patient dress.
+  // Parade: tight ON POST. Mid-field march traffic is no longer inflated by these.
   parade: {
     label: 'parade',
-    desc: 'Parade ground: Caesar is watching — knife-edge files, long dress, no “good enough.”',
+    desc: 'Parade ground: knife-edge dress near posts — mid-field march uses shared traffic (v11).',
     cfg: {
       linePressure: 9.0, separation: 3.9, cohesion: 0.04, personalSpace: 1.50,
       solidScoreMin: 0.72, localQMin: 0.68, shapeGateBase: 0.78, shapeGateNear: 0.70, socialQMin: 0.35
     },
     mind: {
-      planGain: 0.48, localBlend: 0.22, jumpProb: 0.04,
+      planGain: 0.48, localBlend: 0.22,
       // ~0.10–0.12× spacing seat (≈15–18 cm at spacing 1.55)
       arriveFrac: 0.10, lockFrac: 0.12, unlockFrac: 0.70, deadzoneFrac: 0.07,
-      settleHold: 1.45, claimTimeout: 4.5, seatedFrac: 0.14, turnSnap: 2.0,
-      freezeNearFrac: 0.82, freezeShapeQ: 0.85, frameAlpha: 0.025, sigmaScale: 0.95, occPenalty: 2.15
+      settleHold: 1.45, seatedFrac: 0.14, turnSnap: 2.0,
+      freezeNearFrac: 0.65, freezeShapeQ: 0.70, frameAlpha: 0.08, freezeAge: 3.0
     },
     loco: {
       moveCommit: 0.22, holdEnter: 0.12, holdExit: 0.28, adjustEnter: 0.50, solidBreak: 0.50,
-      faceAlignDeg: 3, moveAlignDeg: 10,
-      travelBubble: 2.40, travelSepGain: 3.0, jamTime: 0.50, jamSteer: 2.2,
-      forwardRun: 2.8, accelWalk: 3.6, accelRun: 2.4, brakeRun: 3.8, brakeTurn: 2.2
+      // Dress facing only near post — mid-field uses looser moveAlign via code path
+      faceAlignDeg: 3, moveAlignDeg: 14,
+      travelBubble: 2.15, travelSepGain: 2.5, jamTime: 0.50, jamSteer: 2.2,
+      forwardRun: 3.1, accelWalk: 3.8, accelRun: 2.7, brakeRun: 3.5, brakeTurn: 2.0
     }
   }
 };
@@ -302,6 +392,9 @@ function applyDrillStandard(mode){
   Object.assign(cfg, p.cfg);
   Object.assign(MIND, p.mind);
   Object.assign(LOCO, p.loco);
+  // Shared march traffic — never let parade dress pack overwrite mid-field clearance
+  LOCO.marchBubble = 1.55;
+  LOCO.marchSepGain = 1.55;
   // Sync visible sliders that we batch-set
   const sync = [
     ['linePressure','linePressure','lineOut', v=>Number(v).toFixed(1)],
@@ -400,35 +493,40 @@ function slotWorld(slot, frame, fwd, right){
   const lat=frame.meanLat+slot.lat, dep=frame.meanDep+slot.dep;
   return { x:right.x*lat+fwd.x*dep, z:right.z*lat+fwd.z*dep };
 }
-function initMind(s, nSlots){
-  const k=Math.min(MIND.nParticles, Math.max(4, nSlots));
-  s.particles=[];
-  for(let i=0;i<k;i++) s.particles.push({ si:(s.id*3+i*5)%nSlots, w:1/k });
-  s.beliefSi=s.particles[0].si;
+function initMind(s){
+  // No particles — just “no seat yet”
+  s.beliefSi=-1;
   s.beliefConf=0.15;
   s.targetX=s.x; s.targetZ=s.z;
   s.slotDist=0;
   s.slotLocked=false;
   s.nearSlotTime=0;
-  s.claimTimer=0;
-  s.claimSi=-1;
 }
 function resetFormFrame(){
   formFrame.frozen=false;
   formFrame.age=0;
-  // snap on next update
   formFrame.meanLat=NaN;
 }
 /**
- * Particle filter over discrete formation slots (lightweight "mental map").
- * Settling fixes:
- *  - sticky slot lock once close (stops belief thrash)
- *  - EMA + freeze of formation frame (stops all targets skating when unit mean drifts)
- *  - no PF jumps while locked
+ * v12 LOCAL MUSICAL CHAIRS — no telepathy auction.
+ *
+ * Shared (order / doctrine):
+ *   - lattice of posts (line/rect/…) + facing
+ *   - command-post origin (unit centroid when ordered, then frozen)
+ *
+ * Per soldier (local commitment):
+ *   1. Pick best FREE post (nearest, but avoid body-crowded posts) and commit
+ *   2. Free = no other BODY is currently sitting on it (observable)
+ *   3. If that post gets taken by someone else → re-pick
+ *   4. Local yield if I see a closer man almost on my post, or a crowd there
+ *   5. Stuck / no progress (terminal traffic jam) → re-pick a clearer free post
+ *
+ * Explicitly removed: particle filter, global unique-claim auction,
+ * swap-break reading everyone’s claims.
  */
 function updateAllMentalModels(fwd, right, frame, plan, doctrine, dt){
   if(!cfg.mentalModel || !isForming()){
-    for(const s of soldiers){ s.beliefConf=0; s.slotDist=0; s.slotLocked=false; s.nearSlotTime=0; }
+    for(const s of soldiers){ s.beliefConf=0; s.slotDist=0; s.slotLocked=false; s.nearSlotTime=0; s.beliefSi=-1; }
     return;
   }
   const n=soldiers.length;
@@ -436,7 +534,7 @@ function updateAllMentalModels(fwd, right, frame, plan, doctrine, dt){
   const nSlots=slots.length;
   formFrame.age+=dt;
 
-  // --- Stable formation origin (critical anti-slide) ---
+  // Command post: snap once, light EMA briefly, then freeze (posts stop skating)
   if(!Number.isFinite(formFrame.meanLat)){
     formFrame.meanLat=frame.meanLat; formFrame.meanDep=frame.meanDep;
   }
@@ -445,137 +543,101 @@ function updateAllMentalModels(fwd, right, frame, plan, doctrine, dt){
     formFrame.meanLat+=a*(frame.meanLat-formFrame.meanLat);
     formFrame.meanDep+=a*(frame.meanDep-formFrame.meanDep);
   }
-  // Use frozen/EMA frame for ALL slot world positions so micro-adjustments don't move the map
   const fRef={ meanLat:formFrame.meanLat, meanDep:formFrame.meanDep };
   const worlds=slots.map(sl=>slotWorld(sl, fRef, fwd, right));
 
-  // Occupancy from current positions
-  const nearest=new Array(n);
-  const claim=new Array(nSlots).fill(0);
-  for(let i=0;i<n;i++){
-    let best=0, bestD=Infinity;
-    for(let si=0;si<nSlots;si++){
-      const d=dist2(soldiers[i].x,soldiers[i].z,worlds[si].x,worlds[si].z);
-      if(d<bestD){ bestD=d; best=si; }
-    }
-    nearest[i]=best; claim[best]++;
-  }
-
-  const sig=Math.max(0.6, MIND.sigmaScale*cfg.spacing);
+  const seatedR = cfg.spacing * (MIND.seatedFrac != null ? MIND.seatedFrac : 0.34);
   const lockR=cfg.spacing*MIND.lockFrac;
   const unlockR=cfg.spacing*MIND.unlockFrac;
-  let nearCount=0;
+  const arriveR=cfg.spacing*MIND.arriveFrac;
 
+  // Slot spatial hash — for nearest-free queries (geometry of the order, not minds)
+  const slotCell=Math.max(0.75, cfg.spacing*0.9), slotInv=1/slotCell;
+  const slotMap=new Map();
+  for(let si=0;si<nSlots;si++){
+    const w=worlds[si];
+    const k=gridKey(Math.floor(w.x*slotInv), Math.floor(w.z*slotInv));
+    let b=slotMap.get(k); if(!b){ b=[]; slotMap.set(k,b); }
+    b.push(si);
+  }
+
+  // Who is PHYSICALLY on each post (bodies, not claims) — observable
+  const occupant = new Array(nSlots).fill(-1);
+  const occD = new Array(nSlots).fill(seatedR);
+  // Congestion: bodies near a post (not necessarily seated) — why pure nearest-free piles up
+  const congR = cfg.spacing * (MIND.congRadius != null ? MIND.congRadius : 1.45);
+  const cong = new Array(nSlots).fill(0);
   for(const s of soldiers){
-    if(!s.particles||!s.particles.length||s.particles.some(p=>p.si<0||p.si>=nSlots))
-      initMind(s, nSlots);
-
-    // Unlock only if shoved far from locked cell
-    if(s.slotLocked){
-      const tw=worlds[clamp(s.beliefSi,0,nSlots-1)];
-      s.targetX=tw.x; s.targetZ=tw.z;
-      s.slotDist=dist2(s.x,s.z,s.targetX,s.targetZ);
-      if(s.slotDist>unlockR){ s.slotLocked=false; s.nearSlotTime=0; }
-      else {
-        s.beliefConf=Math.max(s.beliefConf, 0.85);
-        if(s.slotDist<cfg.spacing*MIND.arriveFrac) nearCount++;
-        continue; // sticky: skip PF thrash + auction reassignment
-      }
-    }
-
-    // --- Predict: diffuse only while searching ---
-    const jProb=MIND.jumpProb;
-    for(const p of s.particles){
-      if(Math.random()<jProb){
-        if(Math.random()<0.55){
-          p.si=clamp(p.si+(Math.random()<0.5?-1:1)+(Math.random()<0.25?(Math.random()<0.5?-plan.cols:plan.cols):0), 0, nSlots-1);
-        } else {
-          p.si=Math.floor(Math.random()*nSlots);
+    const ix0=Math.floor(s.x*slotInv), iz0=Math.floor(s.z*slotInv);
+    const rCells = Math.ceil(congR * slotInv) + 1;
+    for(let ix=ix0-rCells; ix<=ix0+rCells; ix++){
+      for(let iz=iz0-rCells; iz<=iz0+rCells; iz++){
+        const bucket=slotMap.get(gridKey(ix,iz));
+        if(!bucket) continue;
+        for(let t=0;t<bucket.length;t++){
+          const si=bucket[t];
+          const d=dist2(s.x,s.z,worlds[si].x,worlds[si].z);
+          if(d<=occD[si]){ occD[si]=d; occupant[si]=s.id; }
+          if(d < congR) cong[si]++;
         }
       }
     }
-
-    // --- Update weights ---
-    let wsum=0;
-    for(const p of s.particles){
-      const wpos=worlds[p.si];
-      const d=dist2(s.x,s.z,wpos.x,wpos.z);
-      let w=Math.exp(-(d*d)/(2*sig*sig));
-      const occ=Math.max(0, claim[p.si]-(nearest[s.id]===p.si?1:0));
-      w*=Math.exp(-MIND.occPenalty*occ);
-      if(p.si===s.beliefSi) w*=1.35; // stronger commitment
-      p.w=w+1e-15; wsum+=p.w;
-    }
-    for(const p of s.particles) p.w/=wsum;
-
-    // Systematic resample
-    const K=s.particles.length, neu=[];
-    let i=0, acc=s.particles[0].w;
-    const start=Math.random()/K;
-    for(let j=0;j<K;j++){
-      const u=start+j/K;
-      while(u>acc && i<K-1){ i++; acc+=s.particles[i].w; }
-      neu.push({ si:s.particles[i].si, w:1/K });
-    }
-    s.particles=neu;
-
-    // MAP
-    const counts=new Array(nSlots).fill(0);
-    for(const p of s.particles) counts[p.si]++;
-    let mapSi=0, mapC=-1;
-    for(let si=0;si<nSlots;si++) if(counts[si]>mapC){ mapC=counts[si]; mapSi=si; }
-    s.beliefSi=mapSi;
-    s.beliefConf=mapC/K;
-    s.targetX=worlds[mapSi].x; s.targetZ=worlds[mapSi].z;
-    s.slotDist=dist2(s.x,s.z,s.targetX,s.targetZ);
-
-    // Sticky lock once close enough with some confidence
-    if(s.slotDist<lockR && s.beliefConf>0.35){
-      s.slotLocked=true;
-      s.beliefConf=Math.max(s.beliefConf, 0.8);
-    }
-    if(s.slotDist<cfg.spacing*MIND.arriveFrac) nearCount++;
   }
 
-  // ========== UNIQUE CLAIMS + MUSICAL CHAIRS ==========
-  // 1) A slot is "seated" if someone is physically on it (close enough).
-  // 2) Only one claim per slot — closer man wins; loser must pick another.
-  // 3) If you claim a seat too long without arriving → abandon and take next free
-  //    (what a real soldier does when someone beats them to the post).
-
-  const seatedR = cfg.spacing * MIND.seatedFrac;
-  const seatedBy = new Array(nSlots).fill(-1); // soldier id seated on slot
-  for(const s of soldiers){
-    // refresh distances to current belief
-    if(s.beliefSi>=0 && s.beliefSi<nSlots){
-      s.targetX=worlds[s.beliefSi].x; s.targetZ=worlds[s.beliefSi].z;
-      s.slotDist=dist2(s.x,s.z,s.targetX,s.targetZ);
-    }
-  }
-  // Who is physically sitting on each slot (closest within seatedR)
-  for(let si=0;si<nSlots;si++){
-    let bestId=-1, bestD=seatedR;
-    for(const s of soldiers){
-      const d=dist2(s.x,s.z,worlds[si].x,worlds[si].z);
-      if(d<=bestD){ bestD=d; bestId=s.id; }
-    }
-    if(bestId>=0) seatedBy[si]=bestId;
+  function isFreeFor(si, sId){
+    const o=occupant[si];
+    return o<0 || o===sId;
   }
 
-  function reassignToFreeSlot(s, takenSet, preferFar){
-    let bestSi=-1, bestD=preferFar?-1:Infinity;
-    for(let si=0;si<nSlots;si++){
-      if(takenSet.has(si)) continue;
-      if(seatedBy[si]>=0 && seatedBy[si]!==s.id) continue; // someone is already sitting there
-      const d=dist2(s.x,s.z,worlds[si].x,worlds[si].z);
-      if(preferFar){ if(d>bestD){ bestD=d; bestSi=si; } } // unused
-      else if(d<bestD){ bestD=d; bestSi=si; }
+  /**
+   * Best free post: distance + body-congestion near the post (observable).
+   * Pure nearest-empty causes terminal jams — everyone funnels the same center posts
+   * while collision discs block the last metres.
+   * opts.stuck → heavier congestion weight, exclude current, fan to clearer posts.
+   */
+  function pickNearestFree(s, excludeSi, opts){
+    opts = opts || {};
+    const stuck = !!opts.stuck;
+    const baseW = MIND.congWeight != null ? MIND.congWeight : 1.15;
+    const wCong = stuck ? baseW * (MIND.stuckCongBoost != null ? MIND.stuckCongBoost : 1.85) : baseW;
+    let bestSi=-1, bestScore=Infinity, bestD=Infinity;
+    const ix0=Math.floor(s.x*slotInv), iz0=Math.floor(s.z*slotInv);
+    // Always score across a wide ring so open flanks beat a nearer crowded knot
+    const R = stuck ? 48 : 16;
+    for(let ix=ix0-R; ix<=ix0+R; ix++){
+      for(let iz=iz0-R; iz<=iz0+R; iz++){
+        const bucket=slotMap.get(gridKey(ix,iz));
+        if(!bucket) continue;
+        for(let t=0;t<bucket.length;t++){
+          const si=bucket[t];
+          if(si===excludeSi) continue;
+          if(!isFreeFor(si, s.id)) continue;
+          const d=dist2(s.x,s.z,worlds[si].x,worlds[si].z);
+          // Don't count myself in congestion if I'm already near this post
+          let c = cong[si];
+          if(d < congR) c = Math.max(0, c - 1);
+          // Stable personal salt — breaks perfect multi-man ties without a global auction
+          const salt = ((s.id * 17 + si * 31) & 7) * 0.06 * cfg.spacing;
+          const score = d + wCong * c * cfg.spacing + salt;
+          if(score < bestScore){ bestScore=score; bestSi=si; bestD=d; }
+        }
+      }
     }
-    // If all free slots "seated" wrongly, ignore seated and take nearest unclaimed
     if(bestSi<0){
-      bestD=Infinity;
       for(let si=0;si<nSlots;si++){
-        if(takenSet.has(si)) continue;
+        if(si===excludeSi) continue;
+        if(!isFreeFor(si, s.id)) continue;
+        const d=dist2(s.x,s.z,worlds[si].x,worlds[si].z);
+        let c = cong[si];
+        if(d < congR) c = Math.max(0, c - 1);
+        const salt = ((s.id * 17 + si * 31) & 7) * 0.06 * cfg.spacing;
+        const score = d + wCong * c * cfg.spacing + salt;
+        if(score < bestScore){ bestScore=score; bestSi=si; bestD=d; }
+      }
+    }
+    if(bestSi<0){
+      for(let si=0;si<nSlots;si++){
+        if(si===excludeSi) continue;
         const d=dist2(s.x,s.z,worlds[si].x,worlds[si].z);
         if(d<bestD){ bestD=d; bestSi=si; }
       }
@@ -585,19 +647,11 @@ function updateAllMentalModels(fwd, right, frame, plan, doctrine, dt){
     s.targetX=worlds[bestSi].x; s.targetZ=worlds[bestSi].z;
     s.slotDist=bestD;
     s.slotLocked=false;
-    s.claimTimer=0;
-    s.claimSi=bestSi;
-    s.beliefConf=0.55;
+    s.beliefConf=0.65;
     s.solid=false;
     s.nearSlotTime=0;
-    // Recast particles around new hypothesis (fresh mind)
-    if(s.particles){
-      for(let i=0;i<s.particles.length;i++){
-        s.particles[i].si = (bestSi + (i%5)-2 + nSlots) % nSlots;
-        s.particles[i].w = 1/s.particles.length;
-      }
-    }
-    // Force them to walk, not spin in place
+    s.noProgress=0;
+    s.prevSlotDist=bestD;
     s.faceMode='travel';
     s.needMove=true;
     s.travelHeading=Math.atan2(s.targetX-s.x, s.targetZ-s.z);
@@ -606,159 +660,143 @@ function updateAllMentalModels(fwd, right, frame, plan, doctrine, dt){
     return true;
   }
 
-  // Resolve double-claims (including locked): one seat, one man — closest wins
-  const claimants=new Map(); // si -> [soldiers]
-  for(const s of soldiers){
-    const si=s.beliefSi;
-    if(!claimants.has(si)) claimants.set(si, []);
-    claimants.get(si).push(s);
-  }
-  const uniquelyTaken=new Set();
-  for(const [si, list] of claimants){
-    if(list.length===1){
-      uniquelyTaken.add(si);
-      continue;
+  function refreshTarget(s){
+    if(s.beliefSi<0 || s.beliefSi>=nSlots){
+      s.slotDist=0; return;
     }
-    // Sort by distance; winner = closest (and prefer already seated / solid)
-    list.sort((a,b)=>{
-      const sa=(seatedBy[si]===a.id?0:1)+(a.solid?0:0.2);
-      const sb=(seatedBy[si]===b.id?0:1)+(b.solid?0:0.2);
-      if(sa!==sb) return sa-sb;
-      return a.slotDist-b.slotDist;
-    });
-    const winner=list[0];
-    uniquelyTaken.add(si);
-    winner.slotLocked = winner.slotDist < lockR || winner.solid;
-    for(let k=1;k<list.length;k++){
-      // Losers must find another chair — even if they thought they were locked
-      const loser=list[k];
-      loser.slotLocked=false;
-      reassignToFreeSlot(loser, uniquelyTaken, false);
-      uniquelyTaken.add(loser.beliefSi);
-    }
+    s.targetX=worlds[s.beliefSi].x; s.targetZ=worlds[s.beliefSi].z;
+    s.slotDist=dist2(s.x,s.z,s.targetX,s.targetZ);
   }
 
-  // Musical chairs timeout: claimed too long without arriving
+  // Sense radius for optional local yield (what this man can see)
+  const seeR = cfg.neighborRadius * 0.85;
+
+  let nearCount=0;
   for(const s of soldiers){
-    if(s.claimSi!==s.beliefSi){ s.claimSi=s.beliefSi; s.claimTimer=0; }
-    const arrived = s.slotDist < cfg.spacing*MIND.arriveFrac;
-    if(arrived){ s.claimTimer=0; continue; }
+    if(s.beliefSi==null || s.beliefSi<-1) initMind(s);
 
-    // Only tick timeout if trying to get there (or stuck turning near a contested mess)
-    const trying = s.state===STATE.FORMING_UP || s.state===STATE.ADJUSTING || s.state===STATE.TURNING
-      || (!s.solid && s.slotDist > cfg.spacing*MIND.arriveFrac);
-    if(trying) s.claimTimer = (s.claimTimer||0) + dt;
-    else s.claimTimer = Math.max(0, (s.claimTimer||0) - dt*0.5);
+    // Clamp invalid index after formation size change
+    if(s.beliefSi>=nSlots) s.beliefSi=-1;
 
-    if((s.claimTimer||0) >= MIND.claimTimeout){
-      // Mark current claim as taken by whoever is closer / seated, then pick next free
-      const taken=new Set(uniquelyTaken);
-      // Treat current seat as unavailable (someone else can have it / it's poisoned for us)
-      taken.add(s.beliefSi);
-      // Also mark all seated slots by others
-      for(let si=0;si<nSlots;si++){
-        if(seatedBy[si]>=0 && seatedBy[si]!==s.id) taken.add(si);
+    refreshTarget(s);
+
+    // ——— Locked on post: stay unless shoved off or someone else is clearly on it ———
+    if(s.slotLocked && s.beliefSi>=0){
+      const o = occupant[s.beliefSi];
+      if(s.slotDist > unlockR){
+        s.slotLocked=false; s.nearSlotTime=0;
+      } else if(o>=0 && o!==s.id){
+        // Someone else is on my post — I was beaten to it
+        s.slotLocked=false;
+        pickNearestFree(s, s.beliefSi);
+        refreshTarget(s);
+        s.beliefConf=0.55;
+        continue;
+      } else {
+        s.beliefConf=0.95;
+        if(s.slotDist < arriveR) nearCount++;
+        continue;
       }
-      // And slots of solid holders
+    }
+
+    // ——— No seat yet → nearest free ———
+    if(s.beliefSi<0){
+      pickNearestFree(s, -1);
+      refreshTarget(s);
+    }
+
+    // ——— My post taken by another body? → next free (core musical chairs) ———
+    if(s.beliefSi>=0){
+      const o = occupant[s.beliefSi];
+      if(o>=0 && o!==s.id){
+        pickNearestFree(s, s.beliefSi);
+        refreshTarget(s);
+      }
+    }
+
+    // ——— Local yield: closer man almost on my post, OR a crowd at a still-"free" post ———
+    if(MIND.seeYield !== false && s.beliefSi>=0 && !s.slotLocked && s.slotDist > arriveR){
+      const tx=s.targetX, tz=s.targetZ;
+      let beat=false;
+      let closest=true;
+      let nearBodies=0;
+      const yf = MIND.seeYieldFrac != null ? MIND.seeYieldFrac : 0.55;
+      const mySense = seeR * (s.awareness||1);
       for(const o of soldiers){
-        if(o!==s && (o.solid || o.slotLocked) && o.slotDist < cfg.spacing*MIND.lockFrac)
-          taken.add(o.beliefSi);
-      }
-      if(reassignToFreeSlot(s, taken, false)){
-        uniquelyTaken.add(s.beliefSi);
-        s.claimTimer=0;
-      } else {
-        s.claimTimer = MIND.claimTimeout * 0.5; // retry later
-      }
-    }
-  }
-
-  // Final unique greedy pass for anyone still colliding on beliefSi
-  nearCount=0;
-  {
-    const order=soldiers.slice().sort((a,b)=>a.slotDist-b.slotDist);
-    const taken=new Set();
-    for(const s of order){
-      if(!taken.has(s.beliefSi)){
-        taken.add(s.beliefSi);
-        s.targetX=worlds[s.beliefSi].x; s.targetZ=worlds[s.beliefSi].z;
-        s.slotDist=dist2(s.x,s.z,s.targetX,s.targetZ);
-      } else {
-        reassignToFreeSlot(s, taken, false);
-        taken.add(s.beliefSi);
-      }
-      if(s.slotDist<cfg.spacing*MIND.arriveFrac) nearCount++;
-    }
-  }
-
-  // ——— Anti hallway-dance on CLAIMS ———
-  // Priority = closer to OWN seat (humans: obvious near-post man keeps walking).
-  // Id is only a tie-break. Loser recasts to a free seat immediately.
-  if(MIND.swapBreakId !== false){
-    const broken=new Set();
-    function closerWins(a, b){
-      // return winner soldier
-      const ra = MIND.closerRatio || 0.88;
-      if(a.slotDist <= b.slotDist * ra) return a;
-      if(b.slotDist <= a.slotDist * ra) return b;
-      // roughly equal — prefer already locked/solid, else lower id
-      if(a.slotLocked !== b.slotLocked) return a.slotLocked ? a : b;
-      if(a.solid !== b.solid) return a.solid ? a : b;
-      return a.id < b.id ? a : b;
-    }
-    for(const a of soldiers){
-      if(broken.has(a.id) || a.solid) continue;
-      for(const b of soldiers){
-        if(b.id<=a.id || broken.has(b.id) || b.solid) continue;
-        const swapClaims = (a.prevBeliefSi===b.beliefSi && b.prevBeliefSi===a.beliefSi && a.beliefSi!==b.beliefSi);
-        // Same claim (shouldn't happen after unique pass, but race-safe)
-        const sameClaim = a.beliefSi===b.beliefSi;
-        // Paths cross / mutual approach to each other's posts
-        const crossPaths = dist2(a.x,a.z,b.targetX,b.targetZ)<cfg.spacing*1.55
-          && dist2(b.x,b.z,a.targetX,a.targetZ)<cfg.spacing*1.55
-          && dist2(a.x,a.z,b.x,b.z)<cfg.spacing*3.0
-          && !a.slotLocked && !b.slotLocked;
-        // Both still far from seats but walking through each other toward distant posts
-        const mutualBlock = !a.slotLocked && !b.slotLocked
-          && dist2(a.x,a.z,b.x,b.z)<cfg.spacing*2.2
-          && a.slotDist>cfg.spacing*0.55 && b.slotDist>cfg.spacing*0.55
-          && a.needMove && b.needMove;
-        if(!swapClaims && !sameClaim && !crossPaths && !mutualBlock) continue;
-
-        a.swapStreak=(a.swapStreak||0)+1;
-        b.swapStreak=(b.swapStreak||0)+1;
-        const winner = closerWins(a, b);
-        const loser = winner===a ? b : a;
-        // Only force reassignment if loser is not obviously already on their seat
-        // or if swap/sameClaim (must break dual ownership)
-        const mustRecast = sameClaim || swapClaims || (loser.swapStreak>=1 && loser.slotDist > winner.slotDist * 1.05);
-        if(mustRecast || crossPaths || mutualBlock){
-          const taken=new Set();
-          for(const s of soldiers){ if(s!==loser) taken.add(s.beliefSi); }
-          taken.add(winner.beliefSi);
-          reassignToFreeSlot(loser, taken, false);
-          broken.add(loser.id);
-          // winner committed: slight lock bias if close
-          if(winner.slotDist < cfg.spacing*MIND.lockFrac*1.4) winner.slotLocked=true;
+        if(o===s) continue;
+        const dMe = dist2(s.x,s.z,o.x,o.z);
+        const theirToPost = dist2(o.x,o.z,tx,tz);
+        if(theirToPost < congR) nearBodies++;
+        if(dMe > mySense) continue;
+        if(theirToPost < s.slotDist * 0.97) closest=false;
+        if(theirToPost < s.slotDist * yf && theirToPost < Math.max(arriveR * 1.6, cfg.spacing * 0.9)){
+          beat=true; break;
         }
-        loser.swapStreak=0;
-        winner.swapStreak=0;
+      }
+      // Terminal pile-up: post is empty (no sitter) but crowded — late men peel to open posts
+      const crowdN = MIND.crowdYieldN != null ? MIND.crowdYieldN : 2;
+      if(!beat && !closest && (cong[s.beliefSi] >= crowdN || nearBodies >= crowdN)){
+        beat=true;
+      }
+      if(beat){
+        pickNearestFree(s, s.beliefSi, { stuck: cong[s.beliefSi] >= crowdN });
+        refreshTarget(s);
       }
     }
-    for(const s of soldiers){
-      if((s.swapStreak||0)>0 && !broken.has(s.id)) s.swapStreak=Math.max(0,(s.swapStreak||0)-1);
-      s.prevBeliefSi=s.beliefSi;
+
+    // ——— Stuck / no progress toward post (collision wall terminal jam) → re-pick clearer free ———
+    if(s.beliefSi>=0 && !s.slotLocked && s.slotDist > arriveR){
+      const prev = s.prevSlotDist != null ? s.prevSlotDist : s.slotDist;
+      const advanced = s.slotDist < prev - 0.035;
+      s.prevSlotDist = s.slotDist;
+      if(advanced){
+        s.noProgress = 0;
+      } else {
+        // Only count as stuck when slow or dense (not just turning at a run)
+        const dense = (s.speed||0) < 0.55 || cong[s.beliefSi] >= 2;
+        if(dense) s.noProgress = (s.noProgress||0) + dt;
+        else s.noProgress = Math.max(0, (s.noProgress||0) - dt*0.5);
+      }
+      const lim = MIND.stuckRepick != null ? MIND.stuckRepick : 0.95;
+      if((s.noProgress||0) >= lim){
+        pickNearestFree(s, s.beliefSi, { stuck: true });
+        refreshTarget(s);
+        s.noProgress = 0;
+      }
+    } else {
+      s.noProgress = 0;
+      if(s.beliefSi>=0) s.prevSlotDist = s.slotDist;
     }
-  } else {
-    for(const s of soldiers) s.prevBeliefSi=s.beliefSi;
+
+    // ——— Arrive / lock when physically on post and free/mine ———
+    if(s.beliefSi>=0){
+      const o = occupant[s.beliefSi];
+      if(s.slotDist < lockR && (o<0 || o===s.id)){
+        s.slotLocked=true;
+        s.beliefConf=0.92;
+        s.noProgress=0;
+        // I'm on it — mark for others this frame
+        if(o<0 || occD[s.beliefSi] >= s.slotDist){
+          occupant[s.beliefSi]=s.id;
+          occD[s.beliefSi]=s.slotDist;
+        }
+      } else if(s.slotDist < arriveR){
+        s.beliefConf=Math.max(s.beliefConf, 0.8);
+      } else {
+        s.beliefConf=0.65;
+      }
+      if(s.slotDist < arriveR) nearCount++;
+    }
   }
 
-  // Freeze formation frame once most men are near posts
+  // Freeze command post once mostly in or after a few seconds of the order
   const nearFrac=nearCount/Math.max(1,n);
-  if(!formFrame.frozen && nearFrac>=MIND.freezeNearFrac && (doctrine?.shapeQ||0)>=MIND.freezeShapeQ){
-    formFrame.frozen=true;
+  if(!formFrame.frozen){
+    if(nearFrac>=(MIND.freezeNearFrac||0.4) && (doctrine?.shapeQ||0)>=(MIND.freezeShapeQ||0.45))
+      formFrame.frozen=true;
+    if(formFrame.age >= (MIND.freezeAge != null ? MIND.freezeAge : 2.5))
+      formFrame.frozen=true;
   }
-  if(!formFrame.frozen && formFrame.age>10) formFrame.frozen=true;
 }
 
 /**
@@ -880,10 +918,10 @@ function makeSoldier(i,p){
     heading:rand(-Math.PI,Math.PI), state:STATE.HOLDING, stateTime:0,
     faceMode:'unit', needMove:false,
     prefX:0, prefZ:0, travelHeading:0, errorMag:0, latticeErr:0, solid:false,
-    // Mental model
-    particles:null, beliefSi:0, beliefConf:0, targetX:p.x, targetZ:p.z, slotDist:0,
+    // Seat mind (v12: commit to a free post — no particles)
+    beliefSi:-1, beliefConf:0, targetX:p.x, targetZ:p.z, slotDist:0,
     slotLocked:false, nearSlotTime:0, jamTimer:0, jamSide:1, intentSp:0,
-    prevBeliefSi:-1, swapStreak:0,
+    noProgress:0, prevSlotDist:0,
     speed:0, phase:rand(0,Math.PI*2),
     discipline:clamp(rand(.85,1.15)+(i===0?.1:0),.7,1.3),
     awareness:clamp(rand(.85,1.15)+(i===0?.08:0),.7,1.28),
@@ -902,9 +940,9 @@ function scatter(){
     s.heading=rand(-Math.PI,Math.PI); s.state=STATE.HOLDING; s.stateTime=0; s.solid=false;
     s.faceMode='unit'; s.needMove=false;
     s.prefX=0; s.prefZ=0; s.errorMag=0; s.latticeErr=0; s.phase=rand(0,Math.PI*2);
-    s.particles=null; s.beliefConf=0; s.targetX=s.x; s.targetZ=s.z; s.slotDist=0;
-    s.slotLocked=false; s.nearSlotTime=0; s.jamTimer=0; s.claimTimer=0; s.claimSi=-1;
-    s.prevBeliefSi=-1; s.swapStreak=0; s.jamSide=1;
+    s.beliefSi=-1; s.beliefConf=0; s.targetX=s.x; s.targetZ=s.z; s.slotDist=0;
+    s.slotLocked=false; s.nearSlotTime=0; s.jamTimer=0; s.jamSide=1;
+    s.noProgress=0; s.prevSlotDist=0;
   }
   resetFormFrame();
   for(let k=0;k<10;k++) resolveHardCollisions(); time=0;
@@ -918,9 +956,9 @@ function setCommand(cmd){
   document.getElementById('loose').classList.toggle('active', cmd==='loose');
   resetFormFrame();
   for(const s of soldiers){
-    s.solid=false; s.particles=null; s.beliefConf=0;
-    s.slotLocked=false; s.nearSlotTime=0; s.jamTimer=0; s.claimTimer=0; s.claimSi=-1;
-    s.prevBeliefSi=-1; s.swapStreak=0; s.jamSide=1;
+    s.solid=false; s.beliefSi=-1; s.beliefConf=0;
+    s.slotLocked=false; s.nearSlotTime=0; s.jamTimer=0; s.jamSide=1;
+    s.noProgress=0; s.prevSlotDist=0;
     if(s.state===STATE.HOLDING || s.state===STATE.ADJUSTING || s.state===STATE.FORMING_UP){
       s.state=STATE.TURNING; s.stateTime=0;
     }
@@ -934,21 +972,34 @@ function rotateFacing(d){
 function resolveHardCollisions(){
   const r=bodyR(), minD=r*2, minD2=minD*minD, n=soldiers.length;
   let overlaps=0;
+  // Broadphase cell slightly larger than contact diameter so pairs aren't missed at edges
+  const collCell = Math.max(minD * 1.05, 0.9);
   for(let iter=0; iter<cfg.collisionIters; iter++){
+    rebuildSpatialGrid(collCell);
+    const inv = spatialGrid.inv, map = spatialGrid.map;
     for(let i=0;i<n;i++){
       const a=soldiers[i];
-      for(let j=i+1;j<n;j++){
-        const b=soldiers[j];
-        let dx=b.x-a.x, dz=b.z-a.z, d2=dx*dx+dz*dz;
-        if(d2>=minD2 && d2>1e-12) continue;
-        overlaps++;
-        let d=Math.sqrt(d2);
-        if(d<1e-8){ const ang=(i*12.9898+j*78.233)%(Math.PI*2); dx=Math.cos(ang); dz=Math.sin(ang); d=1e-8; }
-        else { dx/=d; dz/=d; }
-        const half=(minD-d)*.5;
-        a.x-=dx*half; a.z-=dz*half; b.x+=dx*half; b.z+=dz*half;
-        const closing=(b.vx-a.vx)*dx+(b.vz-a.vz)*dz;
-        if(closing<0){ const jImp=closing*.5; a.vx+=dx*jImp; a.vz+=dz*jImp; b.vx-=dx*jImp; b.vz-=dz*jImp; }
+      const ix0 = Math.floor(a.x * inv), iz0 = Math.floor(a.z * inv);
+      // 3×3 neighborhood is enough for diameter-sized cells
+      for(let dix=-1; dix<=1; dix++){
+        for(let diz=-1; diz<=1; diz++){
+          const bucket = map.get(gridKey(ix0+dix, iz0+diz));
+          if(!bucket) continue;
+          for(let k=0;k<bucket.length;k++){
+            const b = bucket[k];
+            if(b.id <= a.id) continue; // each pair once
+            let dx=b.x-a.x, dz=b.z-a.z, d2=dx*dx+dz*dz;
+            if(d2>=minD2 && d2>1e-12) continue;
+            overlaps++;
+            let d=Math.sqrt(d2);
+            if(d<1e-8){ const ang=(a.id*12.9898+b.id*78.233)%(Math.PI*2); dx=Math.cos(ang); dz=Math.sin(ang); d=1e-8; }
+            else { dx/=d; dz/=d; }
+            const half=(minD-d)*.5;
+            a.x-=dx*half; a.z-=dz*half; b.x+=dx*half; b.z+=dz*half;
+            const closing=(b.vx-a.vx)*dx+(b.vz-a.vz)*dz;
+            if(closing<0){ const jImp=closing*.5; a.vx+=dx*jImp; a.vz+=dz*jImp; b.vx-=dx*jImp; b.vz-=dz*jImp; }
+          }
+        }
       }
     }
     for(const s of soldiers){
@@ -990,9 +1041,100 @@ function frameStats(fwd, right){
 }
 
 /**
- * Formation desire = mental slot + lattice + doctrine + TRAFFIC room-to-move.
+ * Efficient lane score: one ray–disc test per NEARBY agent (spatial hash), not
+ * O(N × samples). Stationary/holding cost more than moving travelers.
+ */
+function scoreLane(sx, sz, dirX, dirZ, look, goalX, goalZ, selfId, hardR, nearby){
+  const stillK = MIND.pathStillCost || 3.2;
+  const moveK = MIND.pathMoveCost || 1.15;
+  const gdx = goalX - sx, gdz = goalZ - sz;
+  const glen = Math.hypot(gdx, gdz) || 1;
+  let score = ((dirX * gdx + dirZ * gdz) / glen) * 4.0;
+  // agents: closest-point-on-ray vs disc (1 test each)
+  const list = nearby || soldiers;
+  for(let i = 0; i < list.length; i++){
+    const o = list[i];
+    if(o.id === selfId) continue;
+    const vx = o.x - sx, vz = o.z - sz;
+    // only care if roughly in front half-plane of the ray
+    const t = vx * dirX + vz * dirZ;
+    if(t < 0.05 || t > look) continue;
+    const px = sx + dirX * t, pz = sz + dirZ * t;
+    const d = Math.hypot(o.x - px, o.z - pz);
+    const still = o.solid || o.state === STATE.HOLDING || (o.speed || 0) < 0.28;
+    const rad = hardR * 2 + (still ? 0.65 : 0.38);
+    if(d < rad){
+      const pen = (rad - d) / rad;
+      score -= pen * pen * (still ? stillK : moveK) * (1.1 - t / (look + 0.1));
+    }
+  }
+  // few static obstacles — always cheap
+  for(let i = 0; i < obstacles.length; i++){
+    const obs = obstacles[i];
+    if(obs.kind === 'hill') continue;
+    const vx = obs.x - sx, vz = obs.z - sz;
+    const t = vx * dirX + vz * dirZ;
+    if(t < 0 || t > look) continue;
+    const px = sx + dirX * t, pz = sz + dirZ * t;
+    const d = Math.hypot(obs.x - px, obs.z - pz);
+    const rad = obs.r + hardR + 0.45;
+    if(d < rad){
+      const pen = (rad - d) / rad;
+      score -= pen * pen * 4.0;
+    }
+  }
+  return score;
+}
+
+/**
+ * Pick walk direction toward goal.
+ * Fast path: score direct only; if clear, cache and return (no detour fan).
+ * Slow path (blocked): few offset samples + spatial neighbors only.
+ * Staggered cache so 180 agents don't all repath the same frame.
+ */
+function bestLaneHeading(s, goalX, goalZ, hardR){
+  const gx = goalX - s.x, gz = goalZ - s.z;
+  const glen = Math.hypot(gx, gz) || 1;
+  const base = Math.atan2(gx, gz);
+  // Use cached lane if still valid
+  if(s.laneUntil != null && time < s.laneUntil && s.laneX != null){
+    return { x: s.laneX, z: s.laneZ, ang: s.laneAng, score: s.laneScore, base, cached: true };
+  }
+  const look = Math.min(MIND.pathLook || 6.5, Math.max(2.0, glen));
+  const nearby = queryNearbyAgents(s.x, s.z, MIND.pathQueryR || 5.5);
+  const baseDx = Math.sin(base), baseDz = Math.cos(base);
+  const directSc = scoreLane(s.x, s.z, baseDx, baseDz, look, goalX, goalZ, s.id, hardR, nearby);
+  const clearT = MIND.pathClearThresh != null ? MIND.pathClearThresh : 2.4;
+  let bestAng = base, bestSc = directSc;
+
+  // Only fan detours when the straight shot is actually blocked
+  if(directSc < clearT){
+    const offs = MIND.pathOffsBlocked || [0.40, -0.40, 0.85, -0.85, 1.25];
+    const directBias = MIND.pathDirectBias || 0.55;
+    const rightBias = MIND.pathRightBias || 0.12;
+    for(let i = 0; i < offs.length; i++){
+      const off = offs[i];
+      const ang = base + off;
+      const dx = Math.sin(ang), dz = Math.cos(ang);
+      let sc = scoreLane(s.x, s.z, dx, dz, look, goalX, goalZ, s.id, hardR, nearby);
+      sc -= Math.abs(off) * directBias;
+      if(off > 0) sc += rightBias;
+      if(sc > bestSc){ bestSc = sc; bestAng = ang; }
+    }
+  }
+
+  const out = { x: Math.sin(bestAng), z: Math.cos(bestAng), ang: bestAng, score: bestSc, base, cached: false };
+  // Stagger repath: base interval + id phase (smooth CPU across frames)
+  const interval = MIND.pathInterval != null ? MIND.pathInterval : 0.22;
+  s.laneX = out.x; s.laneZ = out.z; s.laneAng = out.ang; s.laneScore = out.score;
+  s.laneUntil = time + interval + (s.id % 11) * (interval / 11);
+  return out;
+}
+
+/**
+ * Formation desire = mental slot + lattice + doctrine + TRAFFIC + open-lane pathing.
  * Travel bubble (~2m soft) while moving; hard body contact stays bodyR*2.
- * Jam rule (ant-sim style): if slower than expected while far from post → divert.
+ * Pathing samples clear corridors around stationary/holding men.
  */
 function computeDesire(s, fwd, right, frame, plan, doctrine, dt){
   const hardR=bodyR(), sp=cfg.spacing, sense=cfg.neighborRadius*s.awareness;
@@ -1010,12 +1152,32 @@ function computeDesire(s, fwd, right, frame, plan, doctrine, dt){
     s.state===STATE.FORMING_UP || s.state===STATE.ADJUSTING || s.state===STATE.EVADING ||
     (!s.solid && (s.slotDist||0) > sp*MIND.arriveFrac*0.9)
   );
-  const bubble = traveling ? LOCO.travelBubble : (hardR*2 + 0.25);
+  // v11: MARCH (far) vs DRESS (near) traffic.
+  // Diag: parade thrash mid-field was travelBubble/sep inherited from dress standards —
+  // arrive/lock never touch men far from seats. Scale bubble by seat proximity.
+  const mySlot = s.slotDist||0;
+  const farR = sp * (MIND.farSlotFrac != null ? MIND.farSlotFrac : 3.2);
+  const dressR = sp * (MIND.dressSlotFrac != null ? MIND.dressSlotFrac : 1.4);
+  let seatProx = 0; // 0 = full march, 1 = full dress
+  if(mySlot <= dressR) seatProx = 1;
+  else if(mySlot < farR) seatProx = 1 - (mySlot - dressR) / Math.max(1e-3, farR - dressR);
+  seatProx = seatProx * seatProx; // ease toward dress only when fairly near
+  const marchB = LOCO.marchBubble != null ? LOCO.marchBubble : 1.55;
+  const dressB = LOCO.travelBubble != null ? LOCO.travelBubble : 2.05;
+  const marchG = LOCO.marchSepGain != null ? LOCO.marchSepGain : 1.55;
+  const dressG = LOCO.travelSepGain != null ? LOCO.travelSepGain : 2.4;
+  const bubble = traveling ? lerp(marchB, dressB, seatProx) : (hardR*2 + 0.25);
+  const travelGain = traveling ? lerp(marchG, dressG, seatProx) : 0;
+  // Soft personal-space scale: parade's high personalSpace only fully applies near post
+  const softPS = lerp(Math.max(1.05, hardR*2+0.15), cfg.personalSpace, seatProx);
 
   // 8-bin emptiness for mean-shift / jam divert
   const bins=new Array(8).fill(0);
 
-  for(const o of soldiers){
+  // Spatial neighborhood only — O(local), not O(N). Critical for 180→6000 scale.
+  const nearN = queryNearbyAgentsInto(s.x, s.z, sense, _nearScratch);
+  for(let ni=0; ni<nearN; ni++){
+    const o=_nearScratch[ni];
     if(o===s) continue;
     const dx=o.x-s.x, dz=o.z-s.z, d=Math.hypot(dx,dz);
     if(d>1e-4 && d<sense){
@@ -1025,36 +1187,42 @@ function computeDesire(s, fwd, right, frame, plan, doctrine, dt){
 
       // Hard-ish personal space (always) — allies only SEPARATE, never EVADING
       // (EVADING used to fire on body contact and made everyone red-crawl at ~1 m/s)
-      const soft=Math.max(cfg.personalSpace, hardR*2+0.35);
+      const soft=Math.max(softPS, hardR*2+0.35);
       if(d<soft){
         const str=(soft-d)/soft;
         // Extra punch when almost interpenetrating; still not an FSM emergency
         const close = d < hardR*2+0.15 ? 2.2 : 1.0;
         sepX+=-(dx/d)*str*str*close; sepZ+=-(dz/d)*str*str*close;
       }
-      // Soft travel bubble: prefer ≥ ~2m while moving (humans leave room, avoid piles)
+      // Soft travel bubble — march when far, dress when near (not drill-global)
       if(traveling && d < bubble){
         const str=(bubble-d)/bubble;
         const awayX=-(dx/d), awayZ=-(dz/d);
-        // Closer-to-own-seat has right-of-way: peel less (go straight). Farther peels harder.
-        // (Telemetry: id-only yield still fought when one man was obviously nearer his post.)
+        // Closer-to-own-seat has right-of-way near posts. Far: stable id priority
+        // (equal peel when both far was the hallway dance / thrash ceiling).
         let peelScale=1.0;
-        if(MIND.closerPriority !== false){
-          const myD=s.slotDist||9, theirD=o.slotDist||9;
+        const myD=s.slotDist||9, theirD=o.slotDist||9;
+        const bothFar = myD > farR * 0.55 && theirD > farR * 0.55;
+        if(bothFar && MIND.farPriorityId !== false){
+          // Lower id keeps corridor; higher peels — antisymmetric, no mutual orbit
+          peelScale = s.id < o.id ? 0.22 : (MIND.yieldPeel||2.4);
+        } else if(MIND.closerPriority !== false){
           const ra=MIND.closerRatio||0.88;
           if(myD <= theirD*ra) peelScale=0.28;          // I keep walking
           else if(theirD <= myD*ra) peelScale=MIND.yieldPeel||2.4; // I yield
-          else peelScale=1.0; // equal → symmetric right-hand below
+          else if(MIND.farPriorityId !== false){
+            peelScale = s.id < o.id ? 0.35 : 1.7; // break ties
+          } else peelScale=1.0;
         }
         travelSepX+=awayX*str*str*peelScale;
         travelSepZ+=awayZ*str*str*peelScale;
-        // Right-hand pass when neighbor ahead (both peel right of own heading)
+        // Right-hand pass when neighbor ahead (priority man barely peels)
         if(MIND.passRightHand !== false){
           const hf=Math.sin(s.heading), hz=Math.cos(s.heading);
           const rf=Math.cos(s.heading), rz=-Math.sin(s.heading);
           const aheadAmt = dx*hf + dz*hz;
           if(aheadAmt > 0.15 && d < bubble*0.95){
-            const rh = (peelScale>=1 ? 1.15 : 0.35) * peelScale; // priority man barely peels
+            const rh = (peelScale>=1 ? 1.15 : 0.35) * peelScale;
             travelSepX += rf * str * rh;
             travelSepZ += rz * str * rh;
           }
@@ -1246,22 +1414,23 @@ function computeDesire(s, fwd, right, frame, plan, doctrine, dt){
     }
   }
 
-  // Soft separation — always when packing; stronger while traveling (room to move)
+  // Soft separation — always when packing; travel gain is march→dress scaled
+  // (cfg.separation also eases toward combat-ish when far so parade pack doesn't freeze mid-field)
+  const sepBase = traveling ? lerp(Math.min(cfg.separation, 2.8), cfg.separation, seatProx) : cfg.separation;
   const sepScale = (s.solid && doctrine.shapeQ > 0.7) ? 0.35 : 0.70;
-  dx+=sepX*cfg.separation*sepScale; dz+=sepZ*cfg.separation*sepScale;
-  if(traveling){
-    dx+=travelSepX*cfg.separation*LOCO.travelSepGain;
-    dz+=travelSepZ*cfg.separation*LOCO.travelSepGain;
+  dx+=sepX*sepBase*sepScale; dz+=sepZ*sepBase*sepScale;
+  if(traveling && travelGain > 0){
+    dx+=travelSepX*sepBase*travelGain;
+    dz+=travelSepZ*sepBase*travelGain;
   }
 
-  // ——— MENTAL ARCHETYPE: primary desire toward believed slot ———
+  // ——— MENTAL ARCHETYPE: primary desire toward believed slot (+ open-lane pathing) ———
   if(cfg.mentalModel && isForming() && s.beliefConf>0.04){
     const mx=s.targetX-s.x, mz=s.targetZ-s.z;
     const deadR=cfg.spacing*MIND.deadzoneFrac;
     // Near post: keep a firm dress-to-slot pull (tight formation) but kill bulk jostle
     if(s.slotDist < deadR){
       const t=s.slotDist/Math.max(1e-3,deadR);
-      // local formation forces fade; exact cell pull stays until very close
       dx*=0.20+0.25*t;
       dz*=0.20+0.25*t;
       if(!s.solid || s.slotDist>0.08){
@@ -1270,7 +1439,23 @@ function computeDesire(s, fwd, right, frame, plan, doctrine, dt){
       }
     } else {
       const planK=press*MIND.planGain*(0.35+0.65*s.beliefConf);
-      const mindX=mx*planK, mindZ=mz*planK;
+      let mindX=mx*planK, mindZ=mz*planK;
+      // Open-lane: if far from seat, don't walk straight through planted ranks —
+      // sample goal ± offsets and pick the clearest corridor (stationary = expensive).
+      if(MIND.pathing !== false && traveling && s.slotDist > (MIND.pathMinGoal||0.85)){
+        const lane = bestLaneHeading(s, s.targetX, s.targetZ, hardR);
+        const mindMag = Math.hypot(mindX, mindZ) || planK;
+        // directSc already evaluated inside bestLaneHeading when uncached; use lane.score vs clear thresh
+        const clearT = MIND.pathClearThresh != null ? MIND.pathClearThresh : 2.4;
+        let blend = MIND.pathBlend || 0.72;
+        if(lane.score >= clearT){
+          blend = 0.18; // open road — stay near pure goal
+        } else if(lane.score > clearT - 1.5){
+          blend = Math.min(0.92, blend + 0.1);
+        }
+        mindX = lane.x * mindMag * blend + mindX * (1 - blend);
+        mindZ = lane.z * mindMag * blend + mindZ * (1 - blend);
+      }
       const b=MIND.localBlend;
       dx=mindX*(1-b)+dx*b;
       dz=mindZ*(1-b)+dz*b;
@@ -1288,29 +1473,37 @@ function computeDesire(s, fwd, right, frame, plan, doctrine, dt){
     else s.jamTimer = Math.max(0, (s.jamTimer||0) - dt*0.85);
 
     if((s.jamTimer||0) >= LOCO.jamTime){
-      // Prefer free sector + RIGHT of goal. If a neighbor is clearly closer to their
-      // seat than we are to ours, yield harder (don't deadlock the near man).
+      // Prefer open-lane heading if available, else free sector + right of goal
       const gx=s.targetX-s.x, gz=s.targetZ-s.z, gm=Math.hypot(gx,gz)||1;
       const rx=gz/gm, rz=-gx/gm;
       s.jamSide = 1;
       let jamBoost=1.0;
       if(MIND.closerPriority !== false){
-        // if any nearby traveler is much closer to their post, we are the yielder
-        for(const o of soldiers){
+        const jR=cfg.spacing*2.4;
+        const jN=queryNearbyAgentsInto(s.x, s.z, jR, _pairScratch);
+        for(let ji=0; ji<jN; ji++){
+          const o=_pairScratch[ji];
           if(o===s || o.solid) continue;
           const od=dist2(s.x,s.z,o.x,o.z);
-          if(od>cfg.spacing*2.4) continue;
+          if(od>jR) continue;
           if((o.slotDist||9) * (MIND.closerRatio||0.88) < (s.slotDist||9)){
             jamBoost=1.55; break;
           }
         }
       }
-      const freeM=Math.hypot(freeX,freeZ)||1;
-      const divX=(freeX/freeM)*0.40 + rx*s.jamSide*0.60;
-      const divZ=(freeZ/freeM)*0.40 + rz*s.jamSide*0.60;
+      let divX, divZ;
+      if(MIND.pathing !== false && s.slotDist > (MIND.pathMinGoal||0.85)){
+        const lane = bestLaneHeading(s, s.targetX, s.targetZ, hardR);
+        divX = lane.x * 0.70 + rx * 0.30;
+        divZ = lane.z * 0.70 + rz * 0.30;
+      } else {
+        const freeM=Math.hypot(freeX,freeZ)||1;
+        divX=(freeX/freeM)*0.40 + rx*s.jamSide*0.60;
+        divZ=(freeZ/freeM)*0.40 + rz*s.jamSide*0.60;
+      }
       const dm=Math.hypot(divX,divZ)||1;
-      dx+= (divX/dm)*press*LOCO.jamSteer*0.12*jamBoost;
-      dz+= (divZ/dm)*press*LOCO.jamSteer*0.12*jamBoost;
+      dx+= (divX/dm)*press*LOCO.jamSteer*0.14*jamBoost;
+      dz+= (divZ/dm)*press*LOCO.jamSteer*0.14*jamBoost;
     }
   }
 
@@ -1425,9 +1618,27 @@ function updateFSM(s, desire, dt){
   // Telemetry-proven bug: residual mag (sep/noise) kept needMove+travelHeading alive ON POST,
   // so faceMode stayed "travel" and travelHeading swung ±90–180° forever when bondGood failed.
   // Fix: on post, never refresh travel heading from residual desire (packing forces stay in desire).
+  // v11: far from seat, hysteresis on travelHeading — traffic noise was flipping facing 50–80×/agent.
   const commit = (s.slotLocked || forceSettle || onPost) ? LOCO.moveCommit*1.85 : LOCO.moveCommit;
   if(mag >= commit && !forceSettle && !onPost){
-    s.travelHeading=Math.atan2(desire.dx, desire.dz);
+    const nh = Math.atan2(desire.dx, desire.dz);
+    const far = (s.slotDist||0) > cfg.spacing * (MIND.farSlotFrac != null ? MIND.farSlotFrac*0.5 : 1.6);
+    if(!s.needMove || s.travelHeading==null || !Number.isFinite(s.travelHeading)){
+      s.travelHeading = nh;
+    } else {
+      const dH = Math.abs(angleDiff(nh, s.travelHeading));
+      const hyst = MIND.headHysteresis != null ? MIND.headHysteresis : 0.55;
+      if(!far || dH < hyst || mag > commit * 2.2){
+        // snap when small change, strong desire, or near post
+        if(far && dH > 0.25 && dH < 2.2){
+          const blend = MIND.headBlendFar != null ? MIND.headBlendFar : 0.28;
+          s.travelHeading += angleDiff(nh, s.travelHeading) * blend;
+        } else {
+          s.travelHeading = nh;
+        }
+      }
+      // else: hold previous travel heading (ignore noisy traffic wobble)
+    }
     s.needMove=true;
   } else {
     s.needMove=false;
@@ -1473,9 +1684,8 @@ function updateFSM(s, desire, dt){
     return;
   }
 
-  // Contested / far: only then musical-chairs nudge from long turn
+  // Far + stuck turning: stop spinning, walk toward current post again
   if(s.state===STATE.TURNING && s.slotDist >= cfg.spacing*0.7 && s.stateTime > MIND.turnSnap){
-    s.claimTimer = Math.max(s.claimTimer||0, MIND.claimTimeout*0.85);
     setState(s, STATE.FORMING_UP);
     s.faceMode='travel';
     s.needMove=true;
@@ -1489,11 +1699,15 @@ function updateFSM(s, desire, dt){
   // ——— Relocating: face travel, then walk ———
   s.faceMode='travel';
   let next=s.state;
+  // Mid-field: don't require parade's tight moveAlign (was 10°) — that forced TURNING thrash
+  // while traffic jostled travelHeading. Dress-tight align only near post.
+  const farMove = (s.slotDist||0) > cfg.spacing * (MIND.farSlotFrac != null ? MIND.farSlotFrac*0.45 : 1.4);
+  const moveAUse = farMove ? Math.max(moveA, 18 * Math.PI/180) : moveA;
 
   if(s.state===STATE.HOLDING || s.state===STATE.EVADING || s.state===STATE.MILLING){
-    next = headTravel > moveA ? STATE.TURNING : (mag < LOCO.adjustEnter ? STATE.ADJUSTING : STATE.FORMING_UP);
+    next = headTravel > moveAUse ? STATE.TURNING : (mag < LOCO.adjustEnter ? STATE.ADJUSTING : STATE.FORMING_UP);
   } else if(s.state===STATE.TURNING){
-    if(headTravel <= moveA){
+    if(headTravel <= moveAUse){
       next = mag < LOCO.adjustEnter ? STATE.ADJUSTING : STATE.FORMING_UP;
     } else {
       next = STATE.TURNING;
@@ -1503,7 +1717,7 @@ function updateFSM(s, desire, dt){
     if(mag < LOCO.moveCommit){
       s.needMove=false; s.faceMode='unit'; s.travelHeading=cfg.facing;
       next = headForm > faceA ? STATE.TURNING : STATE.HOLDING;
-    } else if(headTravel > moveA * 1.35){
+    } else if(headTravel > moveAUse * 1.35){
       next = STATE.TURNING;
     } else if(mag < LOCO.adjustEnter){
       next = STATE.ADJUSTING;
@@ -1514,7 +1728,7 @@ function updateFSM(s, desire, dt){
     if(mag < LOCO.moveCommit){
       s.needMove=false; s.faceMode='unit'; s.travelHeading=cfg.facing;
       next = headForm > faceA ? STATE.TURNING : STATE.HOLDING;
-    } else if(headTravel > moveA * 1.35){
+    } else if(headTravel > moveAUse * 1.35){
       next = STATE.TURNING;
     } else if(mag > LOCO.adjustEnter * 1.15){
       next = STATE.FORMING_UP;
@@ -1699,9 +1913,12 @@ function step(dt){
   const frame=frameStats(fwd,right);
   const plan=formationPlan();
   const doctrine=buildDoctrine(frame, plan);
-  // Mental model layer (before desire): update particle beliefs / targets
+  // Seat layer (before desire): local nearest-free posts
   updateAllMentalModels(fwd, right, frame, plan, doctrine, dt);
   metrics._doctrine=doctrine; metrics._plan=plan;
+
+  // One spatial rebuild for pathing + sense + jam (positions stable until loco)
+  rebuildSpatialGrid(MIND.pathCell || 2.2);
 
   for(const s of soldiers){
     const desire=computeDesire(s, fwd, right, frame, plan, doctrine, dt);
@@ -1709,7 +1926,7 @@ function step(dt){
     updateFSM(s, desire, dt);
     applyHeadedLocomotion(s, desire, dt);
   }
-  resolveHardCollisions();
+  resolveHardCollisions(); // rebuilds its own finer grid per iter
   // Soft post-contact cleanup only — do NOT strip momentum (that killed the inertia look).
   for(const s of soldiers){
     const sp=Math.hypot(s.vx,s.vz);
@@ -1720,15 +1937,30 @@ function step(dt){
   }
 }
 
+let _clusterCache={ t:-1, r:0, v:0 };
 function countClusters(radius){
+  // Throttle: HUD metric, not sim-critical — full flood-fill every frame was O(N²)
+  if(_clusterCache.t>=0 && time-_clusterCache.t<0.45 && Math.abs(_clusterCache.r-radius)<0.01)
+    return _clusterCache.v;
   const n=soldiers.length, seen=new Array(n).fill(false); let c=0;
+  // Ensure a usable spatial grid (may have been rebuilt with collision cell size)
+  rebuildSpatialGrid(Math.max(radius*0.55, MIND.pathCell||2.2));
+  const idOf = new Map();
+  for(let i=0;i<n;i++) idOf.set(soldiers[i], i);
   for(let i=0;i<n;i++){
     if(seen[i]) continue; c++; const q=[i]; seen[i]=true;
     for(let qi=0;qi<q.length;qi++){
       const a=soldiers[q[qi]];
-      for(let j=0;j<n;j++) if(!seen[j]&&dist2(a.x,a.z,soldiers[j].x,soldiers[j].z)<radius){ seen[j]=true; q.push(j); }
+      const nn=queryNearbyAgentsInto(a.x, a.z, radius, _nearScratch);
+      for(let k=0;k<nn;k++){
+        const o=_nearScratch[k];
+        const j=idOf.get(o);
+        if(j==null||seen[j]) continue;
+        if(dist2(a.x,a.z,o.x,o.z)<radius){ seen[j]=true; q.push(j); }
+      }
     }
   }
+  _clusterCache={ t:time, r:radius, v:c };
   return c;
 }
 function computeMetrics(){
@@ -1900,9 +2132,17 @@ function drawMentalTargets(){
 function drawBodyDiscs(){ if(!cfg.showBodies) return; for(const s of soldiers) drawDisc(s.x,s.z,bodyR(), s.isLeader?'rgba(233,191,98,.22)':'rgba(143,208,255,.16)', .85, 20); }
 function drawLinks(){
   if(!cfg.links) return; const {fwd}=facingVectors(); const maxL=soldiers.length>130?2:3;
+  const linkR=cfg.spacing*2.2;
+  rebuildSpatialGrid(Math.max(cfg.spacing, MIND.pathCell||2.2));
   for(let i=0;i<soldiers.length;i++){
     const a=soldiers[i]; const near=[]; let drawn=0;
-    for(let j=i+1;j<soldiers.length;j++){ const b=soldiers[j], d=dist2(a.x,a.z,b.x,b.z); if(d<cfg.spacing*2.2) near.push({b,d,dep:Math.abs((b.x-a.x)*fwd.x+(b.z-a.z)*fwd.z)}); }
+    const nn=queryNearbyAgentsInto(a.x, a.z, linkR, _nearScratch);
+    for(let k=0;k<nn;k++){
+      const b=_nearScratch[k];
+      if(b.id<=a.id) continue;
+      const d=dist2(a.x,a.z,b.x,b.z);
+      if(d<linkR) near.push({b,d,dep:Math.abs((b.x-a.x)*fwd.x+(b.z-a.z)*fwd.z)});
+    }
     near.sort((u,v)=>u.d-v.d);
     for(const n of near){ if(drawn>=maxL) break; strokeSeg(world(a.x,.12,a.z), world(n.b.x,.12,n.b.z), n.dep<cfg.depthBand?'#8fd0ff':'#fff', .025, n.dep<cfg.depthBand?.36:.12); drawn++; }
   }
@@ -2010,6 +2250,7 @@ document.getElementById('drillCombat').onclick=()=>applyDrillStandard('combat');
 document.getElementById('drillPractice').onclick=()=>applyDrillStandard('practice');
 document.getElementById('drillParade').onclick=()=>applyDrillStandard('parade');
 document.getElementById('mentalModel').onchange=e=>cfg.mentalModel=e.target.checked;
+document.getElementById('pathing').onchange=e=>{ cfg.pathing=e.target.checked; MIND.pathing=e.target.checked; };
 document.getElementById('showTargets').onchange=e=>cfg.showTargets=e.target.checked;
 document.getElementById('turnLeft').onclick=()=>rotateFacing(-Math.PI/12);
 document.getElementById('turnRight').onclick=()=>rotateFacing(Math.PI/12);
@@ -2048,6 +2289,7 @@ function updateCameraControls(dt){
 }
 
 applyDrillStandard('practice');
+MIND.pathing = cfg.pathing !== false;
 rebuildSoldiers(); computeMetrics();
 let last=performance.now();
 function loop(now){

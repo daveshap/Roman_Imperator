@@ -1,0 +1,238 @@
+{
+  "baseline_thrash": {
+    "n": 8,
+    "avg_swaps": 1232.25,
+    "avg_mid": 0.0,
+    "avg_same_side": 728.125
+  },
+  "right_hand_only": {
+    "n": 8,
+    "avg_swaps": 1211.75,
+    "avg_mid": 0.0,
+    "avg_same_side": 0.0
+  },
+  "right_hand_anti_swap": {
+    "n": 8,
+    "avg_swaps": 0.0,
+    "avg_mid": 0.0,
+    "avg_same_side": 0.0
+  },
+  "rows": [
+    {
+      "right_hand": false,
+      "anti_swap": false,
+      "swap_events": 1300,
+      "total_agent_swaps": 2600,
+      "mirror_same_side_ticks": 1271,
+      "stuck_mid_count": 0,
+      "seed": 0
+    },
+    {
+      "right_hand": true,
+      "anti_swap": false,
+      "swap_events": 1420,
+      "total_agent_swaps": 2840,
+      "mirror_same_side_ticks": 0,
+      "stuck_mid_count": 0,
+      "seed": 0
+    },
+    {
+      "right_hand": true,
+      "anti_swap": true,
+      "swap_events": 0,
+      "total_agent_swaps": 0,
+      "mirror_same_side_ticks": 0,
+      "stuck_mid_count": 0,
+      "seed": 0
+    },
+    {
+      "right_hand": false,
+      "anti_swap": false,
+      "swap_events": 1235,
+      "total_agent_swaps": 2470,
+      "mirror_same_side_ticks": 635,
+      "stuck_mid_count": 0,
+      "seed": 1
+    },
+    {
+      "right_hand": true,
+      "anti_swap": false,
+      "swap_events": 1208,
+      "total_agent_swaps": 2416,
+      "mirror_same_side_ticks": 0,
+      "stuck_mid_count": 0,
+      "seed": 1
+    },
+    {
+      "right_hand": true,
+      "anti_swap": true,
+      "swap_events": 0,
+      "total_agent_swaps": 0,
+      "mirror_same_side_ticks": 0,
+      "stuck_mid_count": 0,
+      "seed": 1
+    },
+    {
+      "right_hand": false,
+      "anti_swap": false,
+      "swap_events": 1336,
+      "total_agent_swaps": 2672,
+      "mirror_same_side_ticks": 756,
+      "stuck_mid_count": 0,
+      "seed": 2
+    },
+    {
+      "right_hand": true,
+      "anti_swap": false,
+      "swap_events": 1269,
+      "total_agent_swaps": 2538,
+      "mirror_same_side_ticks": 0,
+      "stuck_mid_count": 0,
+      "seed": 2
+    },
+    {
+      "right_hand": true,
+      "anti_swap": true,
+      "swap_events": 0,
+      "total_agent_swaps": 0,
+      "mirror_same_side_ticks": 0,
+      "stuck_mid_count": 0,
+      "seed": 2
+    },
+    {
+      "right_hand": false,
+      "anti_swap": false,
+      "swap_events": 1278,
+      "total_agent_swaps": 2556,
+      "mirror_same_side_ticks": 1668,
+      "stuck_mid_count": 0,
+      "seed": 3
+    },
+    {
+      "right_hand": true,
+      "anti_swap": false,
+      "swap_events": 1178,
+      "total_agent_swaps": 2356,
+      "mirror_same_side_ticks": 0,
+      "stuck_mid_count": 0,
+      "seed": 3
+    },
+    {
+      "right_hand": true,
+      "anti_swap": true,
+      "swap_events": 0,
+      "total_agent_swaps": 0,
+      "mirror_same_side_ticks": 0,
+      "stuck_mid_count": 0,
+      "seed": 3
+    },
+    {
+      "right_hand": false,
+      "anti_swap": false,
+      "swap_events": 1162,
+      "total_agent_swaps": 2324,
+      "mirror_same_side_ticks": 159,
+      "stuck_mid_count": 0,
+      "seed": 4
+    },
+    {
+      "right_hand": true,
+      "anti_swap": false,
+      "swap_events": 1210,
+      "total_agent_swaps": 2420,
+      "mirror_same_side_ticks": 0,
+      "stuck_mid_count": 0,
+      "seed": 4
+    },
+    {
+      "right_hand": true,
+      "anti_swap": true,
+      "swap_events": 0,
+      "total_agent_swaps": 0,
+      "mirror_same_side_ticks": 0,
+      "stuck_mid_count": 0,
+      "seed": 4
+    },
+    {
+      "right_hand": false,
+      "anti_swap": false,
+      "swap_events": 1187,
+      "total_agent_swaps": 2374,
+      "mirror_same_side_ticks": 1059,
+      "stuck_mid_count": 0,
+      "seed": 5
+    },
+    {
+      "right_hand": true,
+      "anti_swap": false,
+      "swap_events": 1147,
+      "total_agent_swaps": 2294,
+      "mirror_same_side_ticks": 0,
+      "stuck_mid_count": 0,
+      "seed": 5
+    },
+    {
+      "right_hand": true,
+      "anti_swap": true,
+      "swap_events": 0,
+      "total_agent_swaps": 0,
+      "mirror_same_side_ticks": 0,
+      "stuck_mid_count": 0,
+      "seed": 5
+    },
+    {
+      "right_hand": false,
+      "anti_swap": false,
+      "swap_events": 1329,
+      "total_agent_swaps": 2658,
+      "mirror_same_side_ticks": 68,
+      "stuck_mid_count": 0,
+      "seed": 6
+    },
+    {
+      "right_hand": true,
+      "anti_swap": false,
+      "swap_events": 1077,
+      "total_agent_swaps": 2154,
+      "mirror_same_side_ticks": 0,
+      "stuck_mid_count": 0,
+      "seed": 6
+    },
+    {
+      "right_hand": true,
+      "anti_swap": true,
+      "swap_events": 0,
+      "total_agent_swaps": 0,
+      "mirror_same_side_ticks": 0,
+      "stuck_mid_count": 0,
+      "seed": 6
+    },
+    {
+      "right_hand": false,
+      "anti_swap": false,
+      "swap_events": 1031,
+      "total_agent_swaps": 2062,
+      "mirror_same_side_ticks": 209,
+      "stuck_mid_count": 0,
+      "seed": 7
+    },
+    {
+      "right_hand": true,
+      "anti_swap": false,
+      "swap_events": 1185,
+      "total_agent_swaps": 2370,
+      "mirror_same_side_ticks": 0,
+      "stuck_mid_count": 0,
+      "seed": 7
+    },
+    {
+      "right_hand": true,
+      "anti_swap": true,
+      "swap_events": 0,
+      "total_agent_swaps": 0,
+      "mirror_same_side_ticks": 0,
+      "stuck_mid_count": 0,
+      "seed": 7
+    }
+  ]
+}

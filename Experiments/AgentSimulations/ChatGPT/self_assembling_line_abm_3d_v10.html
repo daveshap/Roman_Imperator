@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Self-Assembling 3D ABM v9 — solid checkpoint (drill standards + form-up)</title>
+<title>Self-Assembling 3D ABM v10 — open-lane pathing around stationary men</title>
 <style>
   :root { color-scheme: dark; --panel: rgba(11,13,17,.84); --line: rgba(255,255,255,.13); --text:#f4efe3; --muted:#bbb4a6; --gold:#e9bf62; --blue:#8fd0ff; }
   html, body { margin:0; width:100%; height:100%; overflow:hidden; background:#101217; color:var(--text); font-family:Inter, ui-sans-serif, system-ui, sans-serif; }
@@ -40,7 +40,7 @@
 <div id="hud">
   <header>
     <h1>Self-assembling ABM <span class="pill" id="status">forming</span></h1>
-    <p>v9 checkpoint: mental slots, musical chairs, traffic, combat/practice/parade standards, on-post facing fix. Solid working drill.</p>
+    <p>v10: open-lane pathing + spatial hash — local O(neighbors) sense/path/collide (scale-ready for hundreds→thousands).</p>
   </header>
   <div class="section">
     <div class="buttons">
@@ -75,7 +75,7 @@
     <div class="mini" id="drillDesc">Practice field: balance of speed and order (default).</div>
   </div>
   <div class="section">
-    <div class="row"><label>Soldiers</label><input id="count" type="range" min="20" max="180" step="5" value="80"><output id="countOut">80</output></div>
+    <div class="row"><label>Soldiers</label><input id="count" type="range" min="20" max="600" step="5" value="80"><output id="countOut">80</output></div>
     <div class="row"><label>Grid spacing</label><input id="spacing" type="range" min="0.95" max="2.4" step="0.05" value="1.55"><output id="spacingOut">1.55</output></div>
     <div class="row"><label>Rect aspect</label><input id="rectAspect" type="range" min="1.4" max="4.0" step="0.1" value="2.6"><output id="aspectOut">2.6</output></div>
     <div class="row"><label>Body radius</label><input id="bodyRadius" type="range" min="0.25" max="0.75" step="0.01" value="0.48"><output id="bodyOut">0.48</output></div>
@@ -86,6 +86,7 @@
     <div class="row"><label>Time scale</label><input id="timeScale" type="range" min="0.1" max="3.0" step="0.1" value="1.0"><output id="timeOut">1.0×</output></div>
     <div class="checkrow">
       <label class="mini"><input id="mentalModel" type="checkbox" checked> mental archetype (particle slots)</label>
+      <label class="mini"><input id="pathing" type="checkbox" checked> open-lane pathing (around stationary)</label>
       <label class="mini"><input id="showTargets" type="checkbox"> show believed spots</label>
       <label class="mini"><input id="links" type="checkbox"> neighbor links</label>
       <label class="mini"><input id="analysisLine" type="checkbox"> analysis footprint</label>
@@ -122,7 +123,7 @@
     <div class="stat"><div class="label">camera</div><div class="value" id="camMode">orbit</div></div>
   </div>
 </div>
-<div id="tip"><b>v9:</b> form-up + pass etiquette: right-hand peel, and <b>closer-to-own-seat has right-of-way</b> (farther man yields/recasts). Stops brief mutual-juke when one is obviously nearer his post.</div>
+<div id="tip"><b>v10:</b> open-lane pathing (direct early-out + few detours) on a spatial hash shared with sense, collisions, and jam. Cost is O(N×local), not O(N²) — aimed at multi-thousand battles later. Still has v9 seats, musical chairs, right-hand pass, closer-keeps, drill standards.</div>
 <script>
 (() => {
 'use strict';
@@ -187,7 +188,7 @@ const cfg = {
   personalSpace:1.35, depthBand:3.0, neighborRadius:18,
   obstacleAvoid:1.55, paused:false, timeScale:1.0,
   links:false, analysisLine:false, showBodies:false, showStates:true,
-  mentalModel:true, showTargets:false,
+  mentalModel:true, showTargets:false, pathing:true,
   followCenter:false, collisionIters:4, worldBound:62,
   drillStandard:'practice',
   // solid/bond gates (overwritten by drill presets)
@@ -220,8 +221,79 @@ const MIND = {
   // Priority: who is closer to THEIR own seat keeps path (not lower id alone)
   closerPriority: true,
   closerRatio: 0.88,     // A has priority if A.slotDist <= B.slotDist * this
-  yieldPeel: 2.4         // farther man peels harder while yielding
+  yieldPeel: 2.4,        // farther man peels harder while yielding
+  // Local open-lane pathing — O(near) via spatial hash, not O(N) per sample
+  pathing: true,
+  pathLook: 6.5,
+  pathBlend: 0.72,
+  pathDirectBias: 0.55,
+  pathRightBias: 0.12,
+  pathStillCost: 3.2,
+  pathMoveCost: 1.15,
+  pathMinGoal: 0.85,
+  pathCell: 2.2,         // spatial hash cell (m); shared by pathing + sense + collisions
+  pathQueryR: 5.5,       // only test blockers within this of agent
+  pathClearThresh: 2.4,  // direct-ray score above this → skip detour samples
+  pathInterval: 0.28,    // repath at most this often (s); staggered by id
+  pathOffsBlocked: null  // filled below: detour angles when direct blocked
 };
+MIND.pathOffsBlocked = [0.40, -0.40, 0.85, -0.85, 1.25];
+
+/**
+ * Spatial hash — rebuilt once (or per collision iter). All local queries are O(neighbors)
+ * not O(N). Integer keys avoid string allocs. Scales toward multi-thousand troops.
+ */
+let spatialGrid = { cell: 2.2, inv: 1/2.2, map: new Map() };
+function gridKey(ix, iz){ return ((ix + 8192) << 14) | (iz + 8192); }
+function rebuildSpatialGrid(cellSize){
+  const cell = cellSize || MIND.pathCell || 2.2;
+  const inv = 1 / cell;
+  const map = new Map();
+  const list = soldiers;
+  for(let i = 0; i < list.length; i++){
+    const s = list[i];
+    const ix = Math.floor(s.x * inv), iz = Math.floor(s.z * inv);
+    const k = gridKey(ix, iz);
+    let bucket = map.get(k);
+    if(!bucket){ bucket = []; map.set(k, bucket); }
+    bucket.push(s);
+  }
+  spatialGrid = { cell, inv, map };
+}
+/** Agents in cells overlapping the query disc (slightly over-inclusive — caller filters). */
+function queryNearbyAgents(sx, sz, radius){
+  const cell = spatialGrid.cell, inv = spatialGrid.inv, map = spatialGrid.map;
+  const r = Math.ceil(radius * inv);
+  const ix0 = Math.floor(sx * inv), iz0 = Math.floor(sz * inv);
+  const out = [];
+  for(let ix = ix0 - r; ix <= ix0 + r; ix++){
+    for(let iz = iz0 - r; iz <= iz0 + r; iz++){
+      const bucket = map.get(gridKey(ix, iz));
+      if(bucket){
+        for(let i = 0; i < bucket.length; i++) out.push(bucket[i]);
+      }
+    }
+  }
+  return out;
+}
+/** Fill preallocated array (reuse to cut GC at high N). Returns count. */
+function queryNearbyAgentsInto(sx, sz, radius, out){
+  const cell = spatialGrid.cell, inv = spatialGrid.inv, map = spatialGrid.map;
+  const r = Math.ceil(radius * inv);
+  const ix0 = Math.floor(sx * inv), iz0 = Math.floor(sz * inv);
+  let n = 0;
+  for(let ix = ix0 - r; ix <= ix0 + r; ix++){
+    for(let iz = iz0 - r; iz <= iz0 + r; iz++){
+      const bucket = map.get(gridKey(ix, iz));
+      if(!bucket) continue;
+      for(let i = 0; i < bucket.length; i++) out[n++] = bucket[i];
+    }
+  }
+  return n;
+}
+// Scratch buffers (avoid per-agent allocs); grow as needed for dense packs
+const _nearScratch = new Array(1024);
+const _pairScratch = new Array(256);
 
 /**
  * Drill standards: batch-set tolerances (slot precision, settle, traffic, pressure).
@@ -449,15 +521,45 @@ function updateAllMentalModels(fwd, right, frame, plan, doctrine, dt){
   const fRef={ meanLat:formFrame.meanLat, meanDep:formFrame.meanDep };
   const worlds=slots.map(sl=>slotWorld(sl, fRef, fwd, right));
 
-  // Occupancy from current positions
+  // Occupancy: nearest slot via slot spatial hash (O(N×local), not O(N×slots))
   const nearest=new Array(n);
   const claim=new Array(nSlots).fill(0);
-  for(let i=0;i<n;i++){
+  const slotCell=Math.max(0.75, cfg.spacing*0.9), slotInv=1/slotCell;
+  const slotMap=new Map();
+  for(let si=0;si<nSlots;si++){
+    const w=worlds[si];
+    const k=gridKey(Math.floor(w.x*slotInv), Math.floor(w.z*slotInv));
+    let b=slotMap.get(k); if(!b){ b=[]; slotMap.set(k,b); }
+    b.push(si);
+  }
+  function nearestSlotSi(sx, sz){
     let best=0, bestD=Infinity;
+    const ix0=Math.floor(sx*slotInv), iz0=Math.floor(sz*slotInv);
+    // 5×5 cells ≈ enough for spacing-sized cells; expand once if empty
+    for(let pass=0; pass<2; pass++){
+      const R=pass===0?2:6;
+      for(let ix=ix0-R; ix<=ix0+R; ix++){
+        for(let iz=iz0-R; iz<=iz0+R; iz++){
+          const bucket=slotMap.get(gridKey(ix,iz));
+          if(!bucket) continue;
+          for(let t=0;t<bucket.length;t++){
+            const si=bucket[t];
+            const d=dist2(sx,sz,worlds[si].x,worlds[si].z);
+            if(d<bestD){ bestD=d; best=si; }
+          }
+        }
+      }
+      if(bestD<Infinity) return best;
+    }
+    // Absolute fallback (sparse / weird frames)
     for(let si=0;si<nSlots;si++){
-      const d=dist2(soldiers[i].x,soldiers[i].z,worlds[si].x,worlds[si].z);
+      const d=dist2(sx,sz,worlds[si].x,worlds[si].z);
       if(d<bestD){ bestD=d; best=si; }
     }
+    return best;
+  }
+  for(let i=0;i<n;i++){
+    const best=nearestSlotSi(soldiers[i].x, soldiers[i].z);
     nearest[i]=best; claim[best]++;
   }
 
@@ -519,11 +621,13 @@ function updateAllMentalModels(fwd, right, frame, plan, doctrine, dt){
     }
     s.particles=neu;
 
-    // MAP
-    const counts=new Array(nSlots).fill(0);
-    for(const p of s.particles) counts[p.si]++;
-    let mapSi=0, mapC=-1;
-    for(let si=0;si<nSlots;si++) if(counts[si]>mapC){ mapC=counts[si]; mapSi=si; }
+    // MAP — mode over particles only (O(K), not O(nSlots))
+    let mapSi=s.particles[0].si, mapC=0;
+    const counts={};
+    for(const p of s.particles){
+      const c=(counts[p.si]|0)+1; counts[p.si]=c;
+      if(c>mapC){ mapC=c; mapSi=p.si; }
+    }
     s.beliefSi=mapSi;
     s.beliefConf=mapC/K;
     s.targetX=worlds[mapSi].x; s.targetZ=worlds[mapSi].z;
@@ -545,6 +649,7 @@ function updateAllMentalModels(fwd, right, frame, plan, doctrine, dt){
 
   const seatedR = cfg.spacing * MIND.seatedFrac;
   const seatedBy = new Array(nSlots).fill(-1); // soldier id seated on slot
+  const seatedD = new Array(nSlots).fill(seatedR);
   for(const s of soldiers){
     // refresh distances to current belief
     if(s.beliefSi>=0 && s.beliefSi<nSlots){
@@ -552,14 +657,26 @@ function updateAllMentalModels(fwd, right, frame, plan, doctrine, dt){
       s.slotDist=dist2(s.x,s.z,s.targetX,s.targetZ);
     }
   }
-  // Who is physically sitting on each slot (closest within seatedR)
-  for(let si=0;si<nSlots;si++){
-    let bestId=-1, bestD=seatedR;
+  // Who sits on each slot: each man only probes nearby slot cells (O(N×local))
+  {
     for(const s of soldiers){
-      const d=dist2(s.x,s.z,worlds[si].x,worlds[si].z);
-      if(d<=bestD){ bestD=d; bestId=s.id; }
+      const ix0=Math.floor(s.x*slotInv), iz0=Math.floor(s.z*slotInv);
+      for(let ix=ix0-1; ix<=ix0+1; ix++){
+        for(let iz=iz0-1; iz<=iz0+1; iz++){
+          const bucket=slotMap.get(gridKey(ix,iz));
+          if(!bucket) continue;
+          for(let t=0;t<bucket.length;t++){
+            const si=bucket[t];
+            const d=dist2(s.x,s.z,worlds[si].x,worlds[si].z);
+            if(d<=seatedD[si]){ seatedD[si]=d; seatedBy[si]=s.id; }
+          }
+        }
+      }
+      const bi=s.beliefSi;
+      if(bi>=0 && bi<nSlots && s.slotDist<=seatedD[bi]){
+        seatedD[bi]=s.slotDist; seatedBy[bi]=s.id;
+      }
     }
-    if(bestId>=0) seatedBy[si]=bestId;
   }
 
   function reassignToFreeSlot(s, takenSet, preferFar){
@@ -934,21 +1051,34 @@ function rotateFacing(d){
 function resolveHardCollisions(){
   const r=bodyR(), minD=r*2, minD2=minD*minD, n=soldiers.length;
   let overlaps=0;
+  // Broadphase cell slightly larger than contact diameter so pairs aren't missed at edges
+  const collCell = Math.max(minD * 1.05, 0.9);
   for(let iter=0; iter<cfg.collisionIters; iter++){
+    rebuildSpatialGrid(collCell);
+    const inv = spatialGrid.inv, map = spatialGrid.map;
     for(let i=0;i<n;i++){
       const a=soldiers[i];
-      for(let j=i+1;j<n;j++){
-        const b=soldiers[j];
-        let dx=b.x-a.x, dz=b.z-a.z, d2=dx*dx+dz*dz;
-        if(d2>=minD2 && d2>1e-12) continue;
-        overlaps++;
-        let d=Math.sqrt(d2);
-        if(d<1e-8){ const ang=(i*12.9898+j*78.233)%(Math.PI*2); dx=Math.cos(ang); dz=Math.sin(ang); d=1e-8; }
-        else { dx/=d; dz/=d; }
-        const half=(minD-d)*.5;
-        a.x-=dx*half; a.z-=dz*half; b.x+=dx*half; b.z+=dz*half;
-        const closing=(b.vx-a.vx)*dx+(b.vz-a.vz)*dz;
-        if(closing<0){ const jImp=closing*.5; a.vx+=dx*jImp; a.vz+=dz*jImp; b.vx-=dx*jImp; b.vz-=dz*jImp; }
+      const ix0 = Math.floor(a.x * inv), iz0 = Math.floor(a.z * inv);
+      // 3×3 neighborhood is enough for diameter-sized cells
+      for(let dix=-1; dix<=1; dix++){
+        for(let diz=-1; diz<=1; diz++){
+          const bucket = map.get(gridKey(ix0+dix, iz0+diz));
+          if(!bucket) continue;
+          for(let k=0;k<bucket.length;k++){
+            const b = bucket[k];
+            if(b.id <= a.id) continue; // each pair once
+            let dx=b.x-a.x, dz=b.z-a.z, d2=dx*dx+dz*dz;
+            if(d2>=minD2 && d2>1e-12) continue;
+            overlaps++;
+            let d=Math.sqrt(d2);
+            if(d<1e-8){ const ang=(a.id*12.9898+b.id*78.233)%(Math.PI*2); dx=Math.cos(ang); dz=Math.sin(ang); d=1e-8; }
+            else { dx/=d; dz/=d; }
+            const half=(minD-d)*.5;
+            a.x-=dx*half; a.z-=dz*half; b.x+=dx*half; b.z+=dz*half;
+            const closing=(b.vx-a.vx)*dx+(b.vz-a.vz)*dz;
+            if(closing<0){ const jImp=closing*.5; a.vx+=dx*jImp; a.vz+=dz*jImp; b.vx-=dx*jImp; b.vz-=dz*jImp; }
+          }
+        }
       }
     }
     for(const s of soldiers){
@@ -990,9 +1120,100 @@ function frameStats(fwd, right){
 }
 
 /**
- * Formation desire = mental slot + lattice + doctrine + TRAFFIC room-to-move.
+ * Efficient lane score: one ray–disc test per NEARBY agent (spatial hash), not
+ * O(N × samples). Stationary/holding cost more than moving travelers.
+ */
+function scoreLane(sx, sz, dirX, dirZ, look, goalX, goalZ, selfId, hardR, nearby){
+  const stillK = MIND.pathStillCost || 3.2;
+  const moveK = MIND.pathMoveCost || 1.15;
+  const gdx = goalX - sx, gdz = goalZ - sz;
+  const glen = Math.hypot(gdx, gdz) || 1;
+  let score = ((dirX * gdx + dirZ * gdz) / glen) * 4.0;
+  // agents: closest-point-on-ray vs disc (1 test each)
+  const list = nearby || soldiers;
+  for(let i = 0; i < list.length; i++){
+    const o = list[i];
+    if(o.id === selfId) continue;
+    const vx = o.x - sx, vz = o.z - sz;
+    // only care if roughly in front half-plane of the ray
+    const t = vx * dirX + vz * dirZ;
+    if(t < 0.05 || t > look) continue;
+    const px = sx + dirX * t, pz = sz + dirZ * t;
+    const d = Math.hypot(o.x - px, o.z - pz);
+    const still = o.solid || o.state === STATE.HOLDING || (o.speed || 0) < 0.28;
+    const rad = hardR * 2 + (still ? 0.65 : 0.38);
+    if(d < rad){
+      const pen = (rad - d) / rad;
+      score -= pen * pen * (still ? stillK : moveK) * (1.1 - t / (look + 0.1));
+    }
+  }
+  // few static obstacles — always cheap
+  for(let i = 0; i < obstacles.length; i++){
+    const obs = obstacles[i];
+    if(obs.kind === 'hill') continue;
+    const vx = obs.x - sx, vz = obs.z - sz;
+    const t = vx * dirX + vz * dirZ;
+    if(t < 0 || t > look) continue;
+    const px = sx + dirX * t, pz = sz + dirZ * t;
+    const d = Math.hypot(obs.x - px, obs.z - pz);
+    const rad = obs.r + hardR + 0.45;
+    if(d < rad){
+      const pen = (rad - d) / rad;
+      score -= pen * pen * 4.0;
+    }
+  }
+  return score;
+}
+
+/**
+ * Pick walk direction toward goal.
+ * Fast path: score direct only; if clear, cache and return (no detour fan).
+ * Slow path (blocked): few offset samples + spatial neighbors only.
+ * Staggered cache so 180 agents don't all repath the same frame.
+ */
+function bestLaneHeading(s, goalX, goalZ, hardR){
+  const gx = goalX - s.x, gz = goalZ - s.z;
+  const glen = Math.hypot(gx, gz) || 1;
+  const base = Math.atan2(gx, gz);
+  // Use cached lane if still valid
+  if(s.laneUntil != null && time < s.laneUntil && s.laneX != null){
+    return { x: s.laneX, z: s.laneZ, ang: s.laneAng, score: s.laneScore, base, cached: true };
+  }
+  const look = Math.min(MIND.pathLook || 6.5, Math.max(2.0, glen));
+  const nearby = queryNearbyAgents(s.x, s.z, MIND.pathQueryR || 5.5);
+  const baseDx = Math.sin(base), baseDz = Math.cos(base);
+  const directSc = scoreLane(s.x, s.z, baseDx, baseDz, look, goalX, goalZ, s.id, hardR, nearby);
+  const clearT = MIND.pathClearThresh != null ? MIND.pathClearThresh : 2.4;
+  let bestAng = base, bestSc = directSc;
+
+  // Only fan detours when the straight shot is actually blocked
+  if(directSc < clearT){
+    const offs = MIND.pathOffsBlocked || [0.40, -0.40, 0.85, -0.85, 1.25];
+    const directBias = MIND.pathDirectBias || 0.55;
+    const rightBias = MIND.pathRightBias || 0.12;
+    for(let i = 0; i < offs.length; i++){
+      const off = offs[i];
+      const ang = base + off;
+      const dx = Math.sin(ang), dz = Math.cos(ang);
+      let sc = scoreLane(s.x, s.z, dx, dz, look, goalX, goalZ, s.id, hardR, nearby);
+      sc -= Math.abs(off) * directBias;
+      if(off > 0) sc += rightBias;
+      if(sc > bestSc){ bestSc = sc; bestAng = ang; }
+    }
+  }
+
+  const out = { x: Math.sin(bestAng), z: Math.cos(bestAng), ang: bestAng, score: bestSc, base, cached: false };
+  // Stagger repath: base interval + id phase (smooth CPU across frames)
+  const interval = MIND.pathInterval != null ? MIND.pathInterval : 0.22;
+  s.laneX = out.x; s.laneZ = out.z; s.laneAng = out.ang; s.laneScore = out.score;
+  s.laneUntil = time + interval + (s.id % 11) * (interval / 11);
+  return out;
+}
+
+/**
+ * Formation desire = mental slot + lattice + doctrine + TRAFFIC + open-lane pathing.
  * Travel bubble (~2m soft) while moving; hard body contact stays bodyR*2.
- * Jam rule (ant-sim style): if slower than expected while far from post → divert.
+ * Pathing samples clear corridors around stationary/holding men.
  */
 function computeDesire(s, fwd, right, frame, plan, doctrine, dt){
   const hardR=bodyR(), sp=cfg.spacing, sense=cfg.neighborRadius*s.awareness;
@@ -1015,7 +1236,10 @@ function computeDesire(s, fwd, right, frame, plan, doctrine, dt){
   // 8-bin emptiness for mean-shift / jam divert
   const bins=new Array(8).fill(0);
 
-  for(const o of soldiers){
+  // Spatial neighborhood only — O(local), not O(N). Critical for 180→6000 scale.
+  const nearN = queryNearbyAgentsInto(s.x, s.z, sense, _nearScratch);
+  for(let ni=0; ni<nearN; ni++){
+    const o=_nearScratch[ni];
     if(o===s) continue;
     const dx=o.x-s.x, dz=o.z-s.z, d=Math.hypot(dx,dz);
     if(d>1e-4 && d<sense){
@@ -1254,14 +1478,13 @@ function computeDesire(s, fwd, right, frame, plan, doctrine, dt){
     dz+=travelSepZ*cfg.separation*LOCO.travelSepGain;
   }
 
-  // ——— MENTAL ARCHETYPE: primary desire toward believed slot ———
+  // ——— MENTAL ARCHETYPE: primary desire toward believed slot (+ open-lane pathing) ———
   if(cfg.mentalModel && isForming() && s.beliefConf>0.04){
     const mx=s.targetX-s.x, mz=s.targetZ-s.z;
     const deadR=cfg.spacing*MIND.deadzoneFrac;
     // Near post: keep a firm dress-to-slot pull (tight formation) but kill bulk jostle
     if(s.slotDist < deadR){
       const t=s.slotDist/Math.max(1e-3,deadR);
-      // local formation forces fade; exact cell pull stays until very close
       dx*=0.20+0.25*t;
       dz*=0.20+0.25*t;
       if(!s.solid || s.slotDist>0.08){
@@ -1270,7 +1493,23 @@ function computeDesire(s, fwd, right, frame, plan, doctrine, dt){
       }
     } else {
       const planK=press*MIND.planGain*(0.35+0.65*s.beliefConf);
-      const mindX=mx*planK, mindZ=mz*planK;
+      let mindX=mx*planK, mindZ=mz*planK;
+      // Open-lane: if far from seat, don't walk straight through planted ranks —
+      // sample goal ± offsets and pick the clearest corridor (stationary = expensive).
+      if(MIND.pathing !== false && traveling && s.slotDist > (MIND.pathMinGoal||0.85)){
+        const lane = bestLaneHeading(s, s.targetX, s.targetZ, hardR);
+        const mindMag = Math.hypot(mindX, mindZ) || planK;
+        // directSc already evaluated inside bestLaneHeading when uncached; use lane.score vs clear thresh
+        const clearT = MIND.pathClearThresh != null ? MIND.pathClearThresh : 2.4;
+        let blend = MIND.pathBlend || 0.72;
+        if(lane.score >= clearT){
+          blend = 0.18; // open road — stay near pure goal
+        } else if(lane.score > clearT - 1.5){
+          blend = Math.min(0.92, blend + 0.1);
+        }
+        mindX = lane.x * mindMag * blend + mindX * (1 - blend);
+        mindZ = lane.z * mindMag * blend + mindZ * (1 - blend);
+      }
       const b=MIND.localBlend;
       dx=mindX*(1-b)+dx*b;
       dz=mindZ*(1-b)+dz*b;
@@ -1288,29 +1527,37 @@ function computeDesire(s, fwd, right, frame, plan, doctrine, dt){
     else s.jamTimer = Math.max(0, (s.jamTimer||0) - dt*0.85);
 
     if((s.jamTimer||0) >= LOCO.jamTime){
-      // Prefer free sector + RIGHT of goal. If a neighbor is clearly closer to their
-      // seat than we are to ours, yield harder (don't deadlock the near man).
+      // Prefer open-lane heading if available, else free sector + right of goal
       const gx=s.targetX-s.x, gz=s.targetZ-s.z, gm=Math.hypot(gx,gz)||1;
       const rx=gz/gm, rz=-gx/gm;
       s.jamSide = 1;
       let jamBoost=1.0;
       if(MIND.closerPriority !== false){
-        // if any nearby traveler is much closer to their post, we are the yielder
-        for(const o of soldiers){
+        const jR=cfg.spacing*2.4;
+        const jN=queryNearbyAgentsInto(s.x, s.z, jR, _pairScratch);
+        for(let ji=0; ji<jN; ji++){
+          const o=_pairScratch[ji];
           if(o===s || o.solid) continue;
           const od=dist2(s.x,s.z,o.x,o.z);
-          if(od>cfg.spacing*2.4) continue;
+          if(od>jR) continue;
           if((o.slotDist||9) * (MIND.closerRatio||0.88) < (s.slotDist||9)){
             jamBoost=1.55; break;
           }
         }
       }
-      const freeM=Math.hypot(freeX,freeZ)||1;
-      const divX=(freeX/freeM)*0.40 + rx*s.jamSide*0.60;
-      const divZ=(freeZ/freeM)*0.40 + rz*s.jamSide*0.60;
+      let divX, divZ;
+      if(MIND.pathing !== false && s.slotDist > (MIND.pathMinGoal||0.85)){
+        const lane = bestLaneHeading(s, s.targetX, s.targetZ, hardR);
+        divX = lane.x * 0.70 + rx * 0.30;
+        divZ = lane.z * 0.70 + rz * 0.30;
+      } else {
+        const freeM=Math.hypot(freeX,freeZ)||1;
+        divX=(freeX/freeM)*0.40 + rx*s.jamSide*0.60;
+        divZ=(freeZ/freeM)*0.40 + rz*s.jamSide*0.60;
+      }
       const dm=Math.hypot(divX,divZ)||1;
-      dx+= (divX/dm)*press*LOCO.jamSteer*0.12*jamBoost;
-      dz+= (divZ/dm)*press*LOCO.jamSteer*0.12*jamBoost;
+      dx+= (divX/dm)*press*LOCO.jamSteer*0.14*jamBoost;
+      dz+= (divZ/dm)*press*LOCO.jamSteer*0.14*jamBoost;
     }
   }
 
@@ -1703,13 +1950,16 @@ function step(dt){
   updateAllMentalModels(fwd, right, frame, plan, doctrine, dt);
   metrics._doctrine=doctrine; metrics._plan=plan;
 
+  // One spatial rebuild for pathing + sense + jam (positions stable until loco)
+  rebuildSpatialGrid(MIND.pathCell || 2.2);
+
   for(const s of soldiers){
     const desire=computeDesire(s, fwd, right, frame, plan, doctrine, dt);
     desire.fleeFrac=doctrine.fleeFrac;
     updateFSM(s, desire, dt);
     applyHeadedLocomotion(s, desire, dt);
   }
-  resolveHardCollisions();
+  resolveHardCollisions(); // rebuilds its own finer grid per iter
   // Soft post-contact cleanup only — do NOT strip momentum (that killed the inertia look).
   for(const s of soldiers){
     const sp=Math.hypot(s.vx,s.vz);
@@ -1720,15 +1970,30 @@ function step(dt){
   }
 }
 
+let _clusterCache={ t:-1, r:0, v:0 };
 function countClusters(radius){
+  // Throttle: HUD metric, not sim-critical — full flood-fill every frame was O(N²)
+  if(_clusterCache.t>=0 && time-_clusterCache.t<0.45 && Math.abs(_clusterCache.r-radius)<0.01)
+    return _clusterCache.v;
   const n=soldiers.length, seen=new Array(n).fill(false); let c=0;
+  // Ensure a usable spatial grid (may have been rebuilt with collision cell size)
+  rebuildSpatialGrid(Math.max(radius*0.55, MIND.pathCell||2.2));
+  const idOf = new Map();
+  for(let i=0;i<n;i++) idOf.set(soldiers[i], i);
   for(let i=0;i<n;i++){
     if(seen[i]) continue; c++; const q=[i]; seen[i]=true;
     for(let qi=0;qi<q.length;qi++){
       const a=soldiers[q[qi]];
-      for(let j=0;j<n;j++) if(!seen[j]&&dist2(a.x,a.z,soldiers[j].x,soldiers[j].z)<radius){ seen[j]=true; q.push(j); }
+      const nn=queryNearbyAgentsInto(a.x, a.z, radius, _nearScratch);
+      for(let k=0;k<nn;k++){
+        const o=_nearScratch[k];
+        const j=idOf.get(o);
+        if(j==null||seen[j]) continue;
+        if(dist2(a.x,a.z,o.x,o.z)<radius){ seen[j]=true; q.push(j); }
+      }
     }
   }
+  _clusterCache={ t:time, r:radius, v:c };
   return c;
 }
 function computeMetrics(){
@@ -1900,9 +2165,17 @@ function drawMentalTargets(){
 function drawBodyDiscs(){ if(!cfg.showBodies) return; for(const s of soldiers) drawDisc(s.x,s.z,bodyR(), s.isLeader?'rgba(233,191,98,.22)':'rgba(143,208,255,.16)', .85, 20); }
 function drawLinks(){
   if(!cfg.links) return; const {fwd}=facingVectors(); const maxL=soldiers.length>130?2:3;
+  const linkR=cfg.spacing*2.2;
+  rebuildSpatialGrid(Math.max(cfg.spacing, MIND.pathCell||2.2));
   for(let i=0;i<soldiers.length;i++){
     const a=soldiers[i]; const near=[]; let drawn=0;
-    for(let j=i+1;j<soldiers.length;j++){ const b=soldiers[j], d=dist2(a.x,a.z,b.x,b.z); if(d<cfg.spacing*2.2) near.push({b,d,dep:Math.abs((b.x-a.x)*fwd.x+(b.z-a.z)*fwd.z)}); }
+    const nn=queryNearbyAgentsInto(a.x, a.z, linkR, _nearScratch);
+    for(let k=0;k<nn;k++){
+      const b=_nearScratch[k];
+      if(b.id<=a.id) continue;
+      const d=dist2(a.x,a.z,b.x,b.z);
+      if(d<linkR) near.push({b,d,dep:Math.abs((b.x-a.x)*fwd.x+(b.z-a.z)*fwd.z)});
+    }
     near.sort((u,v)=>u.d-v.d);
     for(const n of near){ if(drawn>=maxL) break; strokeSeg(world(a.x,.12,a.z), world(n.b.x,.12,n.b.z), n.dep<cfg.depthBand?'#8fd0ff':'#fff', .025, n.dep<cfg.depthBand?.36:.12); drawn++; }
   }
@@ -2010,6 +2283,7 @@ document.getElementById('drillCombat').onclick=()=>applyDrillStandard('combat');
 document.getElementById('drillPractice').onclick=()=>applyDrillStandard('practice');
 document.getElementById('drillParade').onclick=()=>applyDrillStandard('parade');
 document.getElementById('mentalModel').onchange=e=>cfg.mentalModel=e.target.checked;
+document.getElementById('pathing').onchange=e=>{ cfg.pathing=e.target.checked; MIND.pathing=e.target.checked; };
 document.getElementById('showTargets').onchange=e=>cfg.showTargets=e.target.checked;
 document.getElementById('turnLeft').onclick=()=>rotateFacing(-Math.PI/12);
 document.getElementById('turnRight').onclick=()=>rotateFacing(Math.PI/12);
@@ -2048,6 +2322,7 @@ function updateCameraControls(dt){
 }
 
 applyDrillStandard('practice');
+MIND.pathing = cfg.pathing !== false;
 rebuildSoldiers(); computeMetrics();
 let last=performance.now();
 function loop(now){
