@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>soldier_ABM_v02 — scale optimization</title>
+<title>soldier_ABM_v04 — occupancy perception</title>
 <style>
   :root { color-scheme: dark; --bg:#12141a; --panel:rgba(14,16,22,.9); --line:rgba(255,255,255,.12); --text:#f0ebe3; --muted:#a8a296; --gold:#e9bf62; --blue:#8fd0ff; }
   html, body { margin:0; width:100%; height:100%; overflow:hidden; background:var(--bg); color:var(--text); font:13px/1.35 system-ui, sans-serif; }
@@ -26,8 +26,8 @@
 <body>
 <canvas id="c"></canvas>
 <div id="hud">
-  <h1>soldier_ABM_v02</h1>
-  <p>v01 logic, scale-tuned: O(1) seats, candidate rings, dress fast-path, cached lattice. Same form-up behavior.</p>
+  <h1>soldier_ABM_v04</h1>
+  <p>v03 + <b>clearer seat occupancy perception</b> (no shared posts / dancing on taken seats). Century cap 300.</p>
   <div class="row">
     <button id="btnTriple" class="active">TRIPLE</button>
     <button id="btnRect">RECT</button>
@@ -38,7 +38,7 @@
     <button id="btnPause">Pause</button>
   </div>
   <div class="row">
-    <label>N <input id="count" type="range" min="12" max="800" step="4" value="36"><span id="countOut">36</span></label>
+    <label>N <input id="count" type="range" min="12" max="300" step="4" value="36"><span id="countOut">36</span></label>
   </div>
   <div class="row">
     <label>spacing <input id="spacing" type="range" min="1.0" max="2.4" step="0.05" value="1.55"><span id="spOut">1.55</span></label>
@@ -152,31 +152,32 @@ const MIND = {
   arrive: 0.32,      // × spacing — on post
   lock: 0.42,
   unlock: 1.35,      // only unlock if really shoved
-  seated: 0.42,      // body on cell (my perception)
+  seated: 0.48,      // body ON seat if within this × spacing (perception)
+  // Someone else is "using" a seat if within this (slightly larger than seated)
+  occupy: 0.58,      // × spacing — body near seat center counts as taken
   // FORM stickiness — stop musical chairs
   claimTimeout: 3.6,       // only abandon after long stuck
   minCommit: 1.4,          // refuse voluntary re-pick for this long
   switchMargin: 2.4,       // need *much* better cell to switch (×spacing)
   rescoreEvery: 0.55,      // re-evaluate less often
   stickBonus: 3.2,         // ×spacing added to current belief score
-  approachReserve: 1.65,   // ×spacing: if I see someone closer to a cell, treat reserved
+  approachReserve: 1.35,   // mild: closer man approaching this cell
   progressFrac: 0.12,      // claim timeout only if not closing on seat
-  // Local Nash: if many visible free men would greedily take the same post, yield if I'm not closest
-  nashRivalPen: 2.6,       // ×spacing per rival who would also greedily claim this cell
-  nashNotClosest: 4.5,     // ×spacing extra if I'm not the closest among those rivals
-  // Scale: only score nearby lattice candidates (logic unchanged, limited FOV of seats)
-  candMax: 56,             // max cells scored per pick
-  candRadius: 14,          // world meters around me to consider seats
-  seekerCap: 28,           // max visible free men in Nash vote
+  // Cascade through nearest free seats in order (still only local candidates)
+  nearRankMax: 12,         // 1st..Nth nearest free until one is truly empty
+  // Scale: candidate ring around me
+  candMax: 48,
+  candRadius: 11,          // don't even consider far-side seats
+  seekerCap: 24,
   // Private phase gates
   musterRadius: 9.0,
-  musterInner: 6.5,        // "really at the site"
+  musterInner: 6.5,
   musterFriends: 5,
   musterFriendR: 6.5,
-  musterHold: 1.15,        // base min time in muster
+  musterHold: 1.15,
   formToDressHold: 0.65,
-  dressBreak: 2.1,         // ×spacing — only leave dress if badly displaced
-  formBreakSite: 18
+  dressBreak: 2.1,
+  formBreakPad: 10          // + formation radius; don't muster just for crossing the block
 };
 const LOCO = {
   walk: 1.4,
@@ -185,7 +186,11 @@ const LOCO = {
   turn: 4.2,
   moveCommit: 0.35,
   faceAlign: 0.22,
-  stopSpeed: 0.06
+  stopSpeed: 0.06,
+  // Collision / traffic
+  travelSoft: 1.15,        // × body soft while relocating (room to pass)
+  slidePush: 0.55,         // lateral peel on hard contact
+  jamSlide: 0.9            // desire-space peel when stuck against bodies
 };
 
 const soldiers = [];
@@ -524,6 +529,7 @@ function updateMinds(dt) {
   const L = getLattice();
   const { slots, wx, wz, nSlots, cols, rows, sp, fwd, right, maxLat } = L;
   const seatedR = sp * MIND.seated;
+  const occupyR = sp * MIND.occupy; // perception: body near seat = taken
   const arriveR = sp * MIND.arrive;
   const lockR = sp * MIND.lock;
   const unlockR = sp * MIND.unlock;
@@ -531,6 +537,9 @@ function updateMinds(dt) {
   const candR = Math.max(MIND.candRadius, sp * 6);
   const candMax = MIND.candMax;
   const seekerCap = MIND.seekerCap;
+  // Stay in FORM while still near the formation footprint (not across-field exile)
+  const formHalf = Math.hypot((L.cols - 1) * sp * 0.5, (L.rows - 1) * sp * 0.5);
+  const formBreakR = formHalf + MIND.formBreakPad;
 
   // Spatial hash once
   rebuildSpatial(Math.max(3.5, sense * 0.45));
@@ -555,7 +564,7 @@ function updateMinds(dt) {
       s.slotDist = Math.hypot(s.x - s.targetX, s.z - s.targetZ);
       s.commitTimer += dt;
       // phase breaks
-      if (s.distSite > MIND.formBreakSite) {
+      if (s.distSite > formBreakR) {
         setDrill(s, PHASE.MUSTER);
         continue;
       }
@@ -566,17 +575,15 @@ function updateMinds(dt) {
         // fall through next frame as FORM
         continue;
       }
-      // local check: is someone else on my seat?
+      // local check: someone else at/near my seat (and at least as close as me)
       const nVis = queryNear(s.x, s.z, Math.max(sense * 0.55, sp * 3), s);
       let taken = false;
       for (let k = 0; k < nVis; k++) {
         const o = _nearBuf[k];
-        if (bodySeat[o.id] === bsi && Math.hypot(o.x - wx[bsi], o.z - wz[bsi]) <= seatedR) {
-          if (s.slotDist > seatedR * 1.05) { taken = true; break; }
-        }
+        const dO = Math.hypot(o.x - wx[bsi], o.z - wz[bsi]);
+        if (dO <= occupyR && s.slotDist + 1e-4 >= dO) { taken = true; break; }
       }
       if (taken) {
-        // force re-pick next frame in FORM
         setDrill(s, PHASE.FORM);
         s.slotLocked = false;
         continue;
@@ -624,7 +631,7 @@ function updateMinds(dt) {
       const readyOuter = atOuter && withFriends && s.drillTime >= holdNeed + 0.7;
       if (readyPacked || readySolo || readyOuter) setDrill(s, PHASE.FORM);
     } else if (s.drill === PHASE.FORM) {
-      if (s.distSite > MIND.formBreakSite) setDrill(s, PHASE.MUSTER);
+      if (s.distSite > formBreakR) setDrill(s, PHASE.MUSTER);
       else if (
         s.beliefSi >= 0 &&
         s.nearPostTime >= MIND.formToDressHold &&
@@ -632,7 +639,7 @@ function updateMinds(dt) {
         s.slotDist < arriveR * 1.15
       ) setDrill(s, PHASE.DRESS);
     } else if (s.drill === PHASE.DRESS) {
-      if (s.distSite > MIND.formBreakSite) setDrill(s, PHASE.MUSTER);
+      if (s.distSite > formBreakR) setDrill(s, PHASE.MUSTER);
       else if (s.slotDist > sp * MIND.dressBreak) {
         const keep = s.beliefSi;
         setDrill(s, PHASE.FORM);
@@ -672,51 +679,38 @@ function updateMinds(dt) {
       myTo[i] = Math.hypot(s.x - wx[si], s.z - wz[si]);
     }
 
-    // Occupied among candidates: visible body seated there
-    const occupied = new Uint8Array(nCand); // 1 if taken by someone else
+    // ——— Occupancy perception (local only) ———
+    // Seat is taken by someone else if I *see* another man who is:
+    //   (1) within occupyR of the seat center, OR
+    //   (2) assigned bodySeat = that seat, OR
+    //   (3) has that belief and is closer to it than I am (they're claiming it).
+    // Critical: if *I* am also on the seat but another is closer, it is still taken for me
+    // so we don't both lock/dress on the same post.
+    const occupied = new Uint8Array(nCand);
     const seekers = [s];
     for (let k = 0; k < vis.length; k++) {
       const o = vis[k];
       if (o.id < 0 || o.id >= n || soldiers[o.id] !== o) continue;
-      const seat = bodySeat[o.id];
-      if (seat >= 0) {
-        for (let i = 0; i < nCand; i++) {
-          if (cands[i] === seat) { occupied[i] = 1; break; }
+      const oSeat = bodySeat[o.id];
+      for (let i = 0; i < nCand; i++) {
+        const si = cands[i];
+        const dO = Math.hypot(o.x - wx[si], o.z - wz[si]);
+        let taken = false;
+        if (dO <= occupyR) taken = true;
+        else if (oSeat === si) taken = true;
+        else if (o.beliefSi === si && dO + sp * 0.1 < myTo[i]) taken = true;
+        if (taken) {
+          // Only "occupied by other" — if I'm strictly closer to the seat, I own it
+          if (myTo[i] + 1e-4 >= dO) occupied[i] = 1;
         }
       }
       const planted = o.drill === PHASE.DRESS || (o.slotLocked && (o.slotDist || 99) < arriveR * 1.2);
       if (!planted && seekers.length < seekerCap) seekers.push(o);
     }
 
-    // Local Nash on candidates: each seeker greeds nearest free cand
-    const greedyCount = new Uint16Array(nCand);
-    const greedyBestD = new Float64Array(nCand);
-    for (let i = 0; i < nCand; i++) greedyBestD[i] = 1e9;
-    for (let k = 0; k < seekers.length; k++) {
-      const o = seekers[k];
-      let gI = -1, gD = 1e9;
-      for (let i = 0; i < nCand; i++) {
-        const si = cands[i];
-        const d = Math.hypot(o.x - wx[si], o.z - wz[si]);
-        if (occupied[i] && d > seatedR) continue;
-        if (d < gD) { gD = d; gI = i; }
-      }
-      if (gI >= 0) {
-        greedyCount[gI]++;
-        if (gD < greedyBestD[gI]) greedyBestD[gI] = gD;
-      }
-    }
-
-    // Reserved: visible man closer to a cand than me
-    const reserved = new Uint8Array(nCand);
-    const reserveR = sp * MIND.approachReserve;
-    for (let k = 0; k < vis.length && k < 40; k++) {
-      const o = vis[k];
-      for (let i = 0; i < nCand; i++) {
-        const si = cands[i];
-        const dSlot = Math.hypot(o.x - wx[si], o.z - wz[si]);
-        if (dSlot < reserveR && dSlot + sp * 0.12 < myTo[i]) reserved[i] = 1;
-      }
+    /** Is candidate i free for *me*? (not held by a closer/visible other) */
+    function isFreeForMe(i) {
+      return !occupied[i];
     }
 
     function scoreAt(i) {
@@ -725,40 +719,60 @@ function updateMinds(dt) {
       const sl = slots[si];
       let sc = -d;
       const frontness = 1 - (sl.r / Math.max(1, rows - 1));
-      sc += s.prefFront * frontness * sp * 2.4;
+      sc += s.prefFront * frontness * sp * 1.2;
       const edgeness = Math.abs(sl.lat) / maxLat;
-      sc += s.prefEdge * edgeness * sp * 2.2;
-      sc += ((s.id * 13 + si * 7) % 11) * sp * 0.08 * 0.35 * s.prefEdge;
+      sc += s.prefEdge * edgeness * sp * 1.0;
       if (si === s.beliefSi) sc += sp * MIND.stickBonus;
-      if (occupied[i] && d > seatedR * 0.85) sc -= 1000;
-      if (reserved[i] && si !== s.beliefSi) sc -= sp * 2.8;
-      const rivals = greedyCount[i];
-      if (rivals > 1 && si !== s.beliefSi) {
-        sc -= (rivals - 1) * sp * MIND.nashRivalPen;
-        if (d > greedyBestD[i] + sp * 0.08) sc -= sp * MIND.nashNotClosest;
-      }
-      if (!occupied[i] && rivals <= 1 && !reserved[i] && si !== s.beliefSi) sc += sp * 0.7;
+      if (!isFreeForMe(i)) sc -= 1000;
       return sc;
     }
 
+    /**
+     * Cascade: try nearest free seat, then 2nd nearest free, … until one is available.
+     * Only among local candidates (candRadius). Never treat occupied-as-me as free.
+     */
     function pickBest(excludeSi) {
-      let bestI = -1, bestSc = -Infinity;
+      const ranked = [];
       for (let i = 0; i < nCand; i++) {
         if (excludeSi != null && cands[i] === excludeSi) continue;
-        const sc = scoreAt(i);
-        if (sc > bestSc) { bestSc = sc; bestI = i; }
+        if (!isFreeForMe(i)) continue; // perception: taken → not a candidate
+        ranked.push(i);
       }
-      if (bestSc < -500) {
-        bestSc = -Infinity;
-        for (let i = 0; i < nCand; i++) {
-          if (excludeSi != null && cands[i] === excludeSi) continue;
-          let sc = -myTo[i] + (cands[i] === s.beliefSi ? sp * MIND.stickBonus : 0);
-          if (occupied[i] && myTo[i] > seatedR) sc -= 50;
-          if (greedyCount[i] > 1 && myTo[i] > greedyBestD[i] + sp * 0.08) sc -= sp * 2.0;
-          if (sc > bestSc) { bestSc = sc; bestI = i; }
+      ranked.sort((a, b) => myTo[a] - myTo[b]);
+      if (!ranked.length) return -1;
+
+      const K = Math.min(MIND.nearRankMax, ranked.length);
+
+      // Sticky only if my belief is still free (not occupied by someone else)
+      if (s.beliefSi >= 0 && s.beliefSi !== excludeSi) {
+        for (let r = 0; r < K; r++) {
+          if (cands[ranked[r]] === s.beliefSi) {
+            // free for me and among nearest free → keep
+            return s.beliefSi;
+          }
         }
+        // belief not free or not in nearest free list → fall through to cascade
       }
-      return bestI < 0 ? -1 : cands[bestI];
+
+      // 1st free, 2nd free, … first where I'm the closest claimant among seekers
+      for (let r = 0; r < K; r++) {
+        const i = ranked[r];
+        const si = cands[i];
+        let iAmClosest = true;
+        for (let k = 0; k < seekers.length; k++) {
+          const o = seekers[k];
+          if (o === s) continue;
+          const planted = o.drill === PHASE.DRESS || (o.slotLocked && (o.slotDist || 99) < arriveR * 1.2);
+          // Planted on *this* seat already handled by occupied; planted elsewhere ignore
+          if (planted && o.beliefSi !== si) continue;
+          const dO = Math.hypot(o.x - wx[si], o.z - wz[si]);
+          if (dO + sp * 0.06 < myTo[i]) { iAmClosest = false; break; }
+        }
+        if (iAmClosest) return si;
+      }
+      // All top-K free seats have a closer free man: still take nearest free (local),
+      // not a far exile — closest free is better than dancing on a taken post
+      return cands[ranked[0]];
     }
 
     function commit(slot, forceWalk) {
@@ -804,13 +818,17 @@ function updateMinds(dt) {
       const closing = s.slotDist < s.lastSlotDist - sp * MIND.progressFrac * 0.15;
       if (s.slotDist < s.lastSlotDist) s.lastSlotDist = s.slotDist;
 
-      // takenHard: visible body on my seat and I'm not
+      // takenHard: my believed seat is occupied by someone else (same perception as pick)
       let takenHard = false;
-      const mySeat = s.beliefSi;
-      for (let k = 0; k < vis.length; k++) {
-        const o = vis[k];
-        if (bodySeat[o.id] === mySeat && Math.hypot(o.x - wx[mySeat], o.z - wz[mySeat]) <= seatedR) {
-          if (s.slotDist > seatedR * 0.95) { takenHard = true; break; }
+      for (let i = 0; i < nCand; i++) {
+        if (cands[i] === s.beliefSi && occupied[i]) { takenHard = true; break; }
+      }
+      // also if not in cand list: direct check vs visible men
+      if (!takenHard && s.beliefSi >= 0) {
+        for (let k = 0; k < vis.length; k++) {
+          const o = vis[k];
+          const dO = Math.hypot(o.x - wx[s.beliefSi], o.z - wz[s.beliefSi]);
+          if (dO <= occupyR && s.slotDist + 1e-4 >= dO) { takenHard = true; break; }
         }
       }
 
@@ -826,6 +844,7 @@ function updateMinds(dt) {
         }
       }
 
+      // Don't lock/plant if seat is shared with a closer man
       if (s.slotDist < lockR && !takenHard) {
         s.slotLocked = true;
         s.claimTimer = 0;
@@ -869,12 +888,16 @@ function stepSoldier(s, dt) {
   const arriveR = sp * MIND.arrive;
   const drill = s.drill;
 
-  // Separation via spatial neighbors only
+  // Separation via spatial neighbors — wider soft bubble while relocating so paths can slide
   let sepX = 0, sepZ = 0;
+  let jamX = 0, jamZ = 0, jamN = 0;
   const plantDress = drill === PHASE.DRESS && s.slotDist < arriveR * 1.6;
-  const softMul = drill === PHASE.MUSTER ? 0.72 : (plantDress ? 0.55 : 1.0);
-  const soft = (hardR * 2 + 0.35) * softMul;
-  const nSep = queryNear(s.x, s.z, soft, s);
+  const relocating = drill === PHASE.MUSTER || (drill === PHASE.FORM && !(s.slotLocked && s.slotDist < sp * MIND.lock));
+  const softMul = plantDress ? 0.55 : (relocating ? LOCO.travelSoft : 0.95);
+  const soft = (hardR * 2 + 0.4) * softMul;
+  const nSep = queryNear(s.x, s.z, soft * 1.05, s);
+  const hf0 = Math.sin(s.heading), hz0 = Math.cos(s.heading);
+  const rf0 = Math.cos(s.heading), rz0 = -Math.sin(s.heading);
   for (let k = 0; k < nSep; k++) {
     const o = _nearBuf[k];
     const ox = s.x - o.x, oz = s.z - o.z;
@@ -882,8 +905,24 @@ function stepSoldier(s, dt) {
     if (d > 1e-4 && d < soft) {
       const t = (soft - d) / soft;
       const w = plantDress ? (d < hardR * 2.05 ? 1.2 : 0.15) : 1.0;
+      // radial push
       sepX += (ox / d) * t * t * w;
       sepZ += (oz / d) * t * t * w;
+      // if neighbor is ahead while we're relocating, peel right (traffic)
+      if (relocating && !plantDress) {
+        const ahead = (-ox) * hf0 + (-oz) * hz0; // from me toward them? o-s is -ox
+        const toThem = (o.x - s.x) * hf0 + (o.z - s.z) * hz0;
+        if (toThem > 0.05 && d < soft * 0.95) {
+          const side = (s.id & 1) ? 1 : -1; // stable personal side bias
+          sepX += rf0 * side * t * 0.85;
+          sepZ += rz0 * side * t * 0.85;
+        }
+        if (d < hardR * 2.4 && s.speed < 0.55) {
+          jamX += rf0 * ((s.id & 1) ? 1 : -1);
+          jamZ += rz0 * ((s.id & 1) ? 1 : -1);
+          jamN++;
+        }
+      }
     }
   }
 
@@ -913,9 +952,15 @@ function stepSoldier(s, dt) {
     }
   }
 
-  const sepGain = drill === PHASE.MUSTER ? 0.75 : (plantDress ? 0.35 : 1.0);
+  const sepGain = drill === PHASE.MUSTER ? 0.85 : (plantDress ? 0.35 : 1.05);
   dx += sepX * cfg.sep * sepGain;
   dz += sepZ * cfg.sep * sepGain;
+  // Stuck against bodies: slide sideways instead of headbutting
+  if (jamN > 0 && relocating) {
+    const jm = Math.hypot(jamX, jamZ) || 1;
+    dx += (jamX / jm) * cfg.press * LOCO.jamSlide;
+    dz += (jamZ / jm) * cfg.press * LOCO.jamSlide;
+  }
 
   const mag = Math.hypot(dx, dz);
   const onPost = drill !== PHASE.MUSTER && (
@@ -1021,13 +1066,13 @@ function stepSoldier(s, dt) {
 function resolveCollisions() {
   const r = cfg.bodyR * 2;
   const r2 = r * r;
-  // After movement: rebuild hash once, 2 iterations enough with hard discs
+  const slide = LOCO.slidePush;
   rebuildSpatial(Math.max(r * 1.25, 1.15));
   const iters = soldiers.length > 400 ? 2 : 3;
   for (let iter = 0; iter < iters; iter++) {
     for (let i = 0; i < soldiers.length; i++) {
       const a = soldiers[i];
-      const nN = queryNear(a.x, a.z, r * 1.05, a);
+      const nN = queryNear(a.x, a.z, r * 1.08, a);
       for (let k = 0; k < nN; k++) {
         const b = _nearBuf[k];
         if (b.id <= a.id) continue;
@@ -1037,12 +1082,30 @@ function resolveCollisions() {
           const d = Math.sqrt(d2);
           const push = (r - d) * 0.5;
           const ux = dx / d, uz = dz / d;
+          // Normal separation
           a.x -= ux * push; a.z -= uz * push;
           b.x += ux * push; b.z += uz * push;
+          // Lateral slide so head-on jams can pass (right-hand / stable id bias)
+          const tx = -uz, tz = ux;
+          const side = (a.id + b.id) & 1 ? 1 : -1;
+          const slideAmt = push * slide;
+          // Who is relocating peels more; planted dress peels less
+          const aPlant = a.drill === PHASE.DRESS && a.slotDist < cfg.spacing * MIND.arrive * 1.5;
+          const bPlant = b.drill === PHASE.DRESS && b.slotDist < cfg.spacing * MIND.arrive * 1.5;
+          const aW = aPlant ? 0.15 : 1.0;
+          const bW = bPlant ? 0.15 : 1.0;
+          a.x += tx * side * slideAmt * aW;
+          a.z += tz * side * slideAmt * aW;
+          b.x -= tx * side * slideAmt * bW;
+          b.z -= tz * side * slideAmt * bW;
+          // Kill only closing normal speed; keep tangential (slide past)
           const va = a.vx * ux + a.vz * uz;
           const vb = b.vx * ux + b.vz * uz;
-          if (va > 0) { a.vx -= ux * va; a.vz -= uz * va; }
-          if (vb < 0) { b.vx -= ux * vb; b.vz -= uz * vb; }
+          if (va > 0) { a.vx -= ux * va * 0.85; a.vz -= uz * va * 0.85; }
+          if (vb < 0) { b.vx -= ux * vb * 0.85; b.vz -= uz * vb * 0.85; }
+          // Nudge tangent velocity for relocators
+          if (!aPlant) { a.vx += tx * side * 0.35; a.vz += tz * side * 0.35; }
+          if (!bPlant) { b.vx -= tx * side * 0.35; b.vz -= tz * side * 0.35; }
         }
       }
     }

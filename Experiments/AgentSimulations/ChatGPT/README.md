@@ -4,22 +4,27 @@ Single-file HTML prototypes (and a few supporting scripts) exploring **Roman-sty
 
 **How to run:** open any `.html` file in a browser (Chrome/Edge/Firefox). No server required unless a file loads external assets.
 
-**Current recommended build:** [`soldier_ABM_v01.html`](./soldier_ABM_v01.html)  
-(Form-up lab lineage: `soldier_ABM_v00.html`, `v01`, … — checkpoint = copy + increment.)
+**Current recommended build:** [`soldier_ABM_v04.html`](./soldier_ABM_v04.html)  
+(Clean form-up lab — best-so-far. Checkpoint = copy + increment: `v00` → `v01` → …)
 
 ---
 
 ## Directory map
 
-### Clean form-up lab (new lineage)
+### Clean form-up lab (new lineage) — primary
 
 Versioning: `soldier_ABM_vNN.html` with **NN = 00, 01, 02, …**  
-**Checkpoint** = copy current file, bump the number, continue work on the new file (linear history, not dead side copies).
+**Checkpoint** = copy the current tip file, bump NN, continue work on the new tip. Linear history (not orphan archives).
 
 | File | Role |
 |------|------|
-| `soldier_ABM_v00.html` | Smooth muster→form→dress (sticky seats) |
-| `soldier_ABM_v01.html` | **current** — + local Nash seat split + spatial perf |
+| `soldier_ABM_v00.html` | First solid sticky muster→form→dress |
+| `soldier_ABM_v01.html` | Local “don’t all mob one seat” + spatial queries |
+| `soldier_ABM_v02.html` | Scale: O(1) seats, candidate rings, dress fast-path |
+| `soldier_ABM_v03.html` | Near-rank picks (not far exile) + collision slide |
+| `soldier_ABM_v04.html` | **tip** — occupancy perception; N≤300; cascade free nearest |
+
+**Deep design notes for this lineage:** [soldier_ABM form-up lab (v04)](#soldier_abm-form-up-lab-v04--what-works-and-why) below.
 
 ### Self-assembling form-up series (legacy main line)
 
@@ -60,7 +65,168 @@ These are exploratory battle or command demos—not the main form-up lineage.
 
 ---
 
-## Version history: self-assembling line ABM
+## soldier_ABM form-up lab (v04) — what works and why
+
+Captured after v04: form-up is **~99% there** — men take a post, stay on it, and make **micro-adjustments to sit dead-center**. This section freezes the *ideas* so we don’t re-learn them the hard way.
+
+### Scientific claim (non-negotiable)
+
+| Allowed | Forbidden |
+|---------|-----------|
+| Shared **doctrine**: shape (triple/rect/square), spacing, facing, form-on **(0,0)** | Omniscient **formation controller** that assigns each man a world seat |
+| Each man’s **private** belief: “that’s my spot” | Global claim auction / Hungarian / sim-owned free-seat table |
+| Occupancy from **what he can see** (bodies, distance to seat centers) | Telepathic “everyone knows who owns file 5” |
+| Local cascade: 1st free nearest → 2nd → … | Far-field exile (“go to the opposite end of the map”) |
+
+Mental model ≠ painted floor owned by the engine.  
+Mental model = **shared idea of the order** + **private seat hypothesis** + **local perception of who is already using a post**.
+
+There is **no centurion** in this lab. Anchor is geometric origin `(0,0)`. Century size capped at **300** (RTW-scale unit, not 6k stress).
+
+### Shapes only
+
+- **Triple** — 3 ranks deep, files = ceil(N/3)  
+- **Rect** — wide shallow block (aspect ~2.4)  
+- **Square** — ≈√N side  
+
+No line formation in this lineage (kept out on purpose — purify the experiment).
+
+### The three private phases
+
+Each soldier runs his **own** phase machine. The unit is often mixed colors at once (purple / blue / green). That is correct — not a global “everyone dresses now.”
+
+```
+MUSTER  →  FORM  →  DRESS
+ mass       ranks     micro
+ on site    + files   + plant
+```
+
+| Phase | Behavior | Private advance rule |
+|-------|----------|----------------------|
+| **MUSTER** | Run toward site + local mass; **no seats yet** | Near inner site (+ friends / hold time); personal stagger so not all flip the same frame |
+| **FORM** | Pick a free seat in the mental lattice; walk there; sticky commit | Near post long enough + slow → **DRESS** |
+| **DRESS** | Face unit facing; strong magnet to seat center; almost no re-pick | Only leave if badly displaced or seat clearly taken by a closer man |
+
+**Why phases matter:** pure seat-seeking from scatter makes everyone solve the full packing problem while still a cloud. Muster first gets a blob on the parade ground; form is “fill ranks/files”; dress is “stop thrashing and look like soldiers.”
+
+### Seat model (what each man “knows”)
+
+1. **Doctrine lattice** — full rectangular grid on `(0,0)` for the current shape, `si = rank * cols + file`. Shared *idea*, not a dispatcher.  
+2. **Local candidates only** — spiral/ring of seats near *me* (`candRadius` ~11 m, max ~48). Far-side seats are not even scored.  
+3. **Private belief** `beliefSi` — “this is my post” until timeout, shove, or **perception says taken**.  
+4. **Stickiness** — min commit time + big score bonus for current belief → no synchronized musical chairs.  
+5. **Cascade pick** — among seats I consider **free**, sort by distance, try **1st free, 2nd free, …** (up to `nearRankMax` ~12). Stay local; never optimize “farthest open corner of the army.”
+
+### Occupancy perception (the v04 breakthrough)
+
+This is the difference between “pretty good” and “they plant and stay.”
+
+A visible other man makes a seat **taken for me** if any of:
+
+1. His body is within **`occupyR` (~0.58 × spacing)** of the seat center, or  
+2. His computed body-seat is that index, or  
+3. His **belief** is that seat and he is **closer** to it than I am (claim in progress).
+
+**Closer man wins.** If two bodies share a post, the farther one must treat it as occupied and cascade to the next free nearest seat — not orbit (“dance”) the planted man.
+
+Earlier bugs that looked like AI personality were mostly **bad sensors**:
+
+| Symptom | False perception |
+|---------|------------------|
+| Two men “both good” on one post | Seat treated free if *I* was near it, even with someone else closer |
+| Dancing around a planted man | Belief sticky on a seat that never registered as taken |
+| Everyone mobs one free hole | Greedy nearest with no “taken / closer claim” |
+| Exile to far end of block | Huge score penalties for contested near seats → far seats won |
+
+v04 fixes the sensor first; cascade then works because the 1st nearest is honestly free or honestly skipped.
+
+### Dress plant (why micro-adjust looks right)
+
+Once **DRESS**:
+
+- Face **unit facing**, not travel heading (kills spin).  
+- Strong pull to seat center; separation almost off when planted.  
+- Kill residual velocity on post.  
+- Fast path in the mind loop: planted dress men skip expensive re-score / Nash work.
+
+Result: they settle, then **nudge to dead center** if shoved slightly — human “dress the line,” not Brownian polish forever.
+
+### Traffic / collisions (good enough for form-up)
+
+- Soft bubble wider while **relocating** (muster/form).  
+- Ahead-neighbor side peel + hard-contact **lateral slide** (keep tangential velocity).  
+- Planted dress peels little; movers peel more.  
+
+Still not full infantry pathfinding — enough that cross-traffic doesn’t freeze into a mosh of headbutts.
+
+### Efficiency (v02+) without changing the rules
+
+| Cost | Approach |
+|------|----------|
+| Body → seat | O(1) grid index + 3×3 refine, not scan all slots |
+| Seat scoring | Local candidate ring only |
+| Dress men | Fast path every frame |
+| Lattice | Cached until shape / N / spacing / facing change |
+| Neighbors | Integer-key spatial hash |
+| Draw | LOD at higher N (skip depth sort / ticks) |
+| N | Cap **300** for this lab |
+
+Logic and formation quality stay; we only avoid O(N² × slots) thrash.
+
+### Version arc (what each step taught)
+
+| Ver | Lesson |
+|-----|--------|
+| **v00** | Phases + sticky private seats beat pure force soup; form-up can look intentional |
+| **v01** | Uncontested greed → mob one hole; need *local* yield without a global auction |
+| **v02** | Same rules, cheap structure → higher N playable |
+| **v03** | “Not closest ⇒ go far” overshoots; prefer **k-th nearest free**, stay local; slide collisions; don’t muster for walking across the block |
+| **v04** | **Perception of occupancy** is the real plant/share bug; cascade free nearest + closer-wins → men plant and micro-dress dead center |
+
+### Controls (v04)
+
+| Input | Action |
+|-------|--------|
+| `1` / `2` / `3` | Triple / rect / square |
+| `R` | Scatter |
+| Space | Pause |
+| `+` / `-` | Tempo |
+| N slider | 12–300 |
+| Show believed spots | Private targets |
+| Drag / wheel | Orbit / zoom |
+
+Colors: **purple** muster · **blue** form · **green** dress/hold. HUD: phase counts, near-post %, frame ms.
+
+### What *not* to “fix” next (unless intentional)
+
+- Reintroducing a global seat auction or omniscient controller.  
+- Making STEADY / HUD lie with loose thresholds (legacy series pain).  
+- Face-travel while micro-dressing (spin).  
+- Far-field score exile as a substitute for local free cascade.  
+- Expanding N past ~300 in this lab without a new scale plan (LOD/workers).
+
+### Open / 1% remaining (honest)
+
+Not claiming perfection. Possible next *small* probes (not redesigns):
+
+- Edge cases at N≈300 under max tempo.  
+- Shape switch mid-dress (rect→square) with honest re-form.  
+- Optional: denser “dress right / cover front” *after* plant (relational polish on top of seat magnet).  
+- Later: re-embed multi-century / centurion as *physical* agents, not seat dispatchers.
+
+### Bottom line (capture this)
+
+> **Don’t invent the formation from flocking.**  
+> **Give doctrine (shape + spacing + site).**  
+> **Let each man own a private seat belief.**  
+> **Let him see who is already using a post (closer wins).**  
+> **Cascade nearest free seats — not furthest, not auction.**  
+> **Muster, then form, then dress with unit face and plant.**  
+> **v04 works because perception finally matches the packing problem the men are solving.**
+
+---
+
+## Version history: self-assembling line ABM (legacy)
 
 Each version kept what worked and added one hard problem. What failed taught the next design.
 
