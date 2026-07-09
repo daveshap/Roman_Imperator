@@ -4,14 +4,24 @@ Single-file HTML prototypes (and a few supporting scripts) exploring **Roman-sty
 
 **How to run:** open any `.html` file in a browser (Chrome/Edge/Firefox). No server required unless a file loads external assets.
 
-**Current recommended build:** [`self_assembling_line_abm_3d_v9.html`](./self_assembling_line_abm_3d_v9.html)  
-(Solid checkpoint of the full form-up stack. v8 is the same lineage just before the v9 label.)
+**Current recommended build:** [`soldier_ABM_v01.html`](./soldier_ABM_v01.html)  
+(Form-up lab lineage: `soldier_ABM_v00.html`, `v01`, … — checkpoint = copy + increment.)
 
 ---
 
 ## Directory map
 
-### Self-assembling form-up series (main line)
+### Clean form-up lab (new lineage)
+
+Versioning: `soldier_ABM_vNN.html` with **NN = 00, 01, 02, …**  
+**Checkpoint** = copy current file, bump the number, continue work on the new file (linear history, not dead side copies).
+
+| File | Role |
+|------|------|
+| `soldier_ABM_v00.html` | Smooth muster→form→dress (sticky seats) |
+| `soldier_ABM_v01.html` | **current** — + local Nash seat split + spatial perf |
+
+### Self-assembling form-up series (legacy main line)
 
 | File | Role |
 |------|------|
@@ -197,9 +207,25 @@ Each version kept what worked and added one hard problem. What failed taught the
 
 ### v9 — solid checkpoint
 
-**What it is:** Labeled freeze of the v8 working stack after drill-standard retune and facing fix. Prefer **v9** for further features.
+**What it is:** Labeled freeze of the v8 working stack after drill-standard retune and facing fix.
 
 Same capabilities as late v8: mental seats, musical chairs, traffic, no ally-EVADING, on-post unit facing, combat/practice/parade.
+
+---
+
+### v16 — private mental lattice (no global auction)
+
+**What changed:** Form-up mental model is **per-soldier**, not a sim-owned claim table.
+
+- Shared **doctrine only**: shape (line/square/rect/triple) + spacing + facing.
+- Each man estimates a **personal formation origin** from men he can sense (local mass).
+- He paints candidate cells in his head, scores them with **personal prefs** (edge/center, front/back, dense/sparse) + distance.
+- Occupancy is **local**: a cell is “taken” only if he sees a body on it.
+- If stuck / taken → **next best** (his list). No closest-wins auction, no global unique pass.
+- Continuous re-score as the block forms (kids packing a square).
+- On-post facing discipline kept from v8/v9.
+
+**What this is not:** omniscient formation controller, painted floor slots owned by the engine, or Hungarian seat assignment.
 
 ---
 

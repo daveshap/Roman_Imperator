@@ -1,0 +1,1540 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Century ABM v13 — centurion-first (no swarm seats)</title>
+<style>
+  :root { color-scheme: dark; --panel: rgba(11,13,17,.84); --line: rgba(255,255,255,.13); --text:#f4efe3; --muted:#bbb4a6; --gold:#e9bf62; --blue:#8fd0ff; }
+  html, body { margin:0; width:100%; height:100%; overflow:hidden; background:#101217; color:var(--text); font-family:Inter, ui-sans-serif, system-ui, sans-serif; }
+  canvas { display:block; width:100vw; height:100vh; cursor:grab; touch-action:none; }
+  canvas.panning { cursor:move; } canvas.orbiting { cursor:grabbing; }
+  #hud { position:fixed; top:14px; left:14px; width:400px; max-width:calc(100vw - 28px); border:1px solid var(--line); border-radius:15px; background:var(--panel); box-shadow:0 12px 35px rgba(0,0,0,.38); backdrop-filter:blur(10px); user-select:none; max-height:calc(100vh - 28px); overflow-y:auto; }
+  header { padding:13px 15px 10px; border-bottom:1px solid var(--line); }
+  h1 { margin:0; font-size:15px; font-weight:780; } p { margin:5px 0 0; font-size:12px; line-height:1.38; color:var(--muted); }
+  .pill { display:inline-block; margin-left:6px; padding:2px 8px; border-radius:999px; border:1px solid rgba(233,191,98,.45); color:var(--gold); font-size:11px; }
+  .section { padding:11px 15px; border-bottom:1px solid var(--line); } .section:last-child { border-bottom:0; }
+  .buttons { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .buttons3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:8px; }
+  button { color:var(--text); background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.16); border-radius:9px; padding:8px 9px; font:inherit; font-size:12px; cursor:pointer; }
+  button:hover { background:rgba(255,255,255,.14); }
+  button.primary { border-color:rgba(233,191,98,.58); background:rgba(233,191,98,.17); }
+  button.active { border-color:rgba(143,208,255,.60); background:rgba(143,208,255,.13); }
+  button.danger { border-color:rgba(255,122,122,.55); background:rgba(255,80,80,.14); }
+  .row { display:grid; grid-template-columns:118px 1fr 50px; gap:8px; align-items:center; margin:7px 0; font-size:12px; }
+  label { color:var(--muted); } output { color:var(--gold); text-align:right; font-variant-numeric:tabular-nums; }
+  input[type=range] { width:100%; }
+  .stats { display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:12px; }
+  .stat { padding:8px 9px; border-radius:10px; border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.05); }
+  .stat .label { color:var(--muted); font-size:11px; } .stat .value { color:#fff; font-weight:750; margin-top:2px; font-variant-numeric:tabular-nums; }
+  #tip { position:fixed; right:14px; bottom:14px; max-width:560px; border:1px solid var(--line); border-radius:15px; background:var(--panel); padding:11px 13px; color:var(--muted); font-size:12px; line-height:1.42; backdrop-filter:blur(10px); box-shadow:0 12px 35px rgba(0,0,0,.38); }
+  .mini { color:var(--muted); font-size:11px; margin-top:7px; } .checkrow { display:grid; gap:5px; margin-top:7px; }
+  kbd { color:#fff; background:rgba(255,255,255,.10); padding:1px 5px; border-radius:5px; font-size:11px; }
+  .note { margin-top:8px; padding:8px 9px; border-radius:10px; border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.04); font-size:11px; line-height:1.4; color:var(--muted); }
+  .note b { color:var(--gold); font-weight:650; }
+  .fsmLegend { display:grid; grid-template-columns:1fr 1fr; gap:4px 10px; margin-top:8px; font-size:11px; color:var(--muted); }
+  .fsmLegend span i { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <header>
+    <h1>Century ABM <span class="pill" id="status">ready</span></h1>
+    <p>v13: <b>centurion-first</b> — he plants, issues orders; men seek him and pack. Not musical chairs.</p>
+  </header>
+  <div class="section">
+    <div class="buttons">
+      <button id="pause" class="primary">Pause</button>
+      <button id="scatter">Scatter men</button>
+    </div>
+    <div class="buttons3">
+      <button id="formLine" class="active">LINE</button>
+      <button id="formBlock">BLOCK</button>
+      <button id="formLoose">LOOSE</button>
+    </div>
+    <div class="buttons" style="margin-top:8px">
+      <button id="orderRally">Rally now</button>
+      <button id="orderForm">Form now</button>
+      <button id="turnLeft">Face left</button>
+      <button id="turnRight">Face right</button>
+      <button id="killCent" class="danger">Kill centurion</button>
+      <button id="reviveCent">Revive / reset CO</button>
+    </div>
+    <div class="buttons" style="margin-top:8px">
+      <button id="resetCam">Reset camera</button>
+      <button id="followCenter">Follow unit</button>
+    </div>
+    <div class="mini">
+      <kbd>1</kbd> line · <kbd>2</kbd> block · <kbd>M</kbd> loose · <kbd>R</kbd> scatter · <kbd>G</kbd> rally · <kbd>F</kbd> form<br>
+      <kbd>K</kbd> kill CO · <kbd>V</kbd> revive · <kbd>Q/E</kbd> face · Cam: LMB orbit · RMB pan · WASD
+    </div>
+  </div>
+  <div class="section">
+    <div class="row"><label>Soldiers</label><input id="count" type="range" min="12" max="200" step="4" value="48"><output id="countOut">48</output></div>
+    <div class="row"><label>Grid spacing</label><input id="spacing" type="range" min="0.95" max="2.4" step="0.05" value="1.55"><output id="spacingOut">1.55</output></div>
+    <div class="row"><label>Body radius</label><input id="bodyRadius" type="range" min="0.25" max="0.75" step="0.01" value="0.48"><output id="bodyOut">0.48</output></div>
+    <div class="row"><label>Form pressure</label><input id="linePressure" type="range" min="0" max="12" step="0.1" value="6.0"><output id="lineOut">6.0</output></div>
+    <div class="row"><label>Separation</label><input id="separation" type="range" min="0" max="5" step="0.05" value="3.0"><output id="sepOut">3.0</output></div>
+    <div class="row"><label>Isolation glue</label><input id="cohesion" type="range" min="0" max="0.8" step="0.01" value="0.22"><output id="cohOut">0.22</output></div>
+    <div class="row"><label>Sense radius</label><input id="neighborRadius" type="range" min="5" max="34" step="0.5" value="16"><output id="senseOut">16</output></div>
+    <div class="row"><label>Rally radius</label><input id="rallyR" type="range" min="4" max="22" step="0.5" value="10"><output id="rallyOut">10</output></div>
+    <div class="row"><label>Time scale</label><input id="timeScale" type="range" min="0.1" max="3.0" step="0.1" value="1.0"><output id="timeOut">1.0×</output></div>
+    <div class="checkrow">
+      <label class="mini"><input id="showCmd" type="checkbox" checked> show command packet / anchor</label>
+      <label class="mini"><input id="showStates" type="checkbox" checked> FSM discs</label>
+      <label class="mini"><input id="showBodies" type="checkbox"> collision discs</label>
+      <label class="mini"><input id="links" type="checkbox"> neighbor links</label>
+      <label class="mini"><input id="analysisLine" type="checkbox"> unit envelope</label>
+      <label class="mini"><input id="autoPlant" type="checkbox" checked> centurion auto plant after scatter</label>
+    </div>
+    <div class="note">
+      <b>v13 mind:</b> Centurion assesses → moves → plants → emits a <i>command packet</i>
+      (order, anchor, facing, depth). Men do not claim lattice seats; they <b>seek the anchor</b>,
+      then <b>pack L/R / file</b> under FORM. Kill the CO to see reform collapse into militia clump.
+    </div>
+    <div class="fsmLegend">
+      <span><i style="background:#5ad4a0"></i>hold <b id="nHold">0</b></span>
+      <span><i style="background:#e9bf62"></i>turn <b id="nTurn">0</b></span>
+      <span><i style="background:#8fd0ff"></i>form <b id="nForm">0</b></span>
+      <span><i style="background:#c48cff"></i>adjust <b id="nAdj">0</b></span>
+      <span><i style="background:#999"></i>mill <b id="nMill">0</b></span>
+      <span><i style="background:#ff7a7a"></i>evade <b id="nEvade">0</b></span>
+    </div>
+  </div>
+  <div class="section stats">
+    <div class="stat"><div class="label">centurion FSM</div><div class="value" id="centFsm">—</div></div>
+    <div class="stat"><div class="label">command order</div><div class="value" id="cmdOrder">—</div></div>
+    <div class="stat"><div class="label">rally in radius</div><div class="value" id="rallyFrac">—</div></div>
+    <div class="stat"><div class="label">facing aligned</div><div class="value" id="faceFrac">—</div></div>
+    <div class="stat"><div class="label">frontage</div><div class="value" id="frontage">—</div></div>
+    <div class="stat"><div class="label">depth span</div><div class="value" id="depthSpan">—</div></div>
+    <div class="stat"><div class="label">spacing quality</div><div class="value" id="spacingQuality">—</div></div>
+    <div class="stat"><div class="label">avg speed</div><div class="value" id="avgSpeed">—</div></div>
+    <div class="stat"><div class="label">cohort settled</div><div class="value" id="settled">—</div></div>
+    <div class="stat"><div class="label">anchor dist (avg)</div><div class="value" id="anchDist">—</div></div>
+    <div class="stat"><div class="label">time to plant</div><div class="value" id="tPlant">—</div></div>
+    <div class="stat"><div class="label">camera</div><div class="value" id="camMode">orbit</div></div>
+  </div>
+</div>
+<div id="tip"><b>v13:</b> Formation location is chosen by the <b>centurion</b>, not the mean of N seat-seekers. Scatter → he plants → men rally to his body → FORM packs a line/block. No global lattice auction.</div>
+<script>
+(() => {
+'use strict';
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha:false });
+const DPR = Math.min(2, devicePixelRatio || 1);
+let W=1,H=1;
+function resize(){ W=Math.floor(innerWidth*DPR); H=Math.floor(innerHeight*DPR); canvas.width=W; canvas.height=H; canvas.style.width=innerWidth+'px'; canvas.style.height=innerHeight+'px'; ctx.setTransform(DPR,0,0,DPR,0,0); }
+addEventListener('resize', resize); resize();
+
+const LOCO = {
+  forwardRun: 3.8, forwardWalk: 1.35, forwardShuffle: 0.7,
+  emergency: 2.4,
+  moveAlignDeg: 20, faceAlignDeg: 12,
+  moveCommit: 0.42, holdEnter: 0.28, holdExit: 0.55, adjustEnter: 0.90, solidBreak: 0.95,
+  turnStand: 3.2, turnWalk: 2.2, turnRun: 0.95,
+  accelWalk: 5.0, accelRun: 3.4,
+  brakeIdle: 6.5, brakeWalk: 4.2, brakeRun: 2.6, brakeTurn: 1.7, brakeHold: 3.4,
+  coastDrag: 0.35, yawCoupling: 2.8, latDampen: 3.5, stopSpeed: 0.06,
+  marchBubble: 1.55, marchSepGain: 1.55,
+  travelBubble: 1.9, travelSepGain: 2.1,
+  jamSpeedFrac: 0.38, jamTime: 0.65, jamSteer: 2.8, obstacleLookahead: 2.8
+};
+
+const STATE = { HOLDING:'holding', TURNING:'turning', FORMING_UP:'forming_up', ADJUSTING:'adjusting', MILLING:'milling', EVADING:'evading' };
+const STATE_COLOR = {
+  holding:'rgba(90,212,160,.38)', turning:'rgba(233,191,98,.42)', forming_up:'rgba(143,208,255,.40)',
+  adjusting:'rgba(196,140,255,.38)', milling:'rgba(160,160,160,.32)', evading:'rgba(255,122,122,.45)'
+};
+
+/** Centurion high-level brain states */
+const CO = {
+  IDLE:'idle', ASSESS:'assess', MOVE_TO_POST:'move_to_post', PLANT:'plant',
+  CALL_RALLY:'call_rally', CALL_FORM:'call_form', HOLD:'hold', DEAD:'dead'
+};
+
+const cfg = {
+  count:48, command:'line', facing:0,
+  spacing:1.55, bodyRadius:0.48,
+  linePressure:6.0, separation:3.0, cohesion:0.22,
+  personalSpace:1.35, depthBand:3.0, neighborRadius:16,
+  rallyRadius:10,
+  obstacleAvoid:1.55, paused:false, timeScale:1.0,
+  links:false, analysisLine:false, showBodies:false, showStates:true, showCmd:true,
+  followCenter:false, collisionIters:4, worldBound:62, autoPlant:true
+};
+
+/** Live command packet — the only shared doctrine. Issued by the centurion. */
+const CMD = {
+  order: 'hold',           // loose | rally | form_line | form_block | hold
+  anchorX: 0, anchorZ: 0,
+  facing: 0,
+  depthPref: 1,
+  spacing: 1.55,
+  urgency: 1.0,
+  age: 0,
+  live: true               // false when no CO and no lasting order
+};
+
+const CCFG = {
+  assessTime: 0.35,
+  plantFaceTol: 0.18,
+  rallyFracToForm: 0.55,   // switch rally → form when this many near
+  formSettleFrac: 0.45,
+  holdSpeed: 0.45,
+  postPickRadius: 18,      // look for densest knot within this of self/COM
+  postOffset: 0.0,         // stand at front of mass (0 = on chosen ground)
+  voiceR: 28,              // men "hear" within this (soft falloff beyond)
+  formLineDepth: 1,
+  formBlockDepth: 4
+};
+
+let soldiers=[], centurion=null, time=0, plantClock=-1, orderClock=0;
+let metrics={ depthSpan:0, frontage:0, aspect:0, spacingQuality:0, avgSpeed:0, clusters:0,
+  cx:0,cz:0,minLat:0,maxLat:0,minDep:0,maxDep:0, nHold:0,nTurn:0,nForm:0,nAdj:0,nMill:0,nEvade:0,
+  rallyFrac:0, faceFrac:0, avgAnch:0, tPlant:'—', centFsm:'—' };
+const keys=Object.create(null);
+
+const CAM0={ yaw:0.55, pitch:0.72, dist:42 };
+const camera={ yaw:CAM0.yaw, pitch:CAM0.pitch, dist:CAM0.dist, target:{x:0,y:0,z:0}, eye:{x:0,y:0,z:0}, fwd:{x:0,y:0,z:1}, right:{x:1,y:0,z:0}, up:{x:0,y:1,z:0}, f:900 };
+
+// ——— Spatial hash ———
+let spatialGrid={ cell:2.2, inv:1/2.2, map:new Map() };
+function gridKey(ix, iz){ return ((ix + 8192) << 14) | (iz + 8192); }
+function rebuildSpatialGrid(cellSize){
+  const cell=cellSize||2.2, inv=1/cell, map=new Map();
+  for(const s of soldiers){
+    if(s.dead) continue;
+    const k=gridKey(Math.floor(s.x*inv), Math.floor(s.z*inv));
+    let b=map.get(k); if(!b){ b=[]; map.set(k,b); }
+    b.push(s);
+  }
+  spatialGrid={ cell, inv, map };
+}
+function queryNearbyAgentsInto(sx, sz, radius, out){
+  const inv=spatialGrid.inv, map=spatialGrid.map;
+  const rCells=Math.ceil(radius*inv)+1;
+  const ix0=Math.floor(sx*inv), iz0=Math.floor(sz*inv);
+  let n=0;
+  for(let ix=ix0-rCells; ix<=ix0+rCells; ix++){
+    for(let iz=iz0-rCells; iz<=iz0+rCells; iz++){
+      const bucket=map.get(gridKey(ix,iz));
+      if(!bucket) continue;
+      for(let i=0;i<bucket.length;i++){
+        const o=bucket[i];
+        if(Math.hypot(o.x-sx,o.z-sz)<=radius) out[n++]=o;
+      }
+    }
+  }
+  return n;
+}
+const _nearScratch=new Array(256);
+
+function clamp(x,a,b){ return Math.max(a, Math.min(b,x)); }
+function lerp(a,b,t){ return a+(b-a)*t; }
+function smoothstep(t){ t=clamp(t,0,1); return t*t*(3-2*t); }
+function rand(a,b){ return a+Math.random()*(b-a); }
+function angleDiff(a,b){ return Math.atan2(Math.sin(a-b), Math.cos(a-b)); }
+function dist2(x1,z1,x2,z2){ return Math.hypot(x1-x2,z1-z2); }
+function sub(a,b){ return {x:a.x-b.x,y:a.y-b.y,z:a.z-b.z}; }
+function cross(a,b){ return {x:a.y*b.z-a.z*b.y,y:a.z*b.x-a.x*b.z,z:a.x*b.y-a.y*b.x}; }
+function norm(v){ const m=Math.hypot(v.x,v.y,v.z)||1; return {x:v.x/m,y:v.y/m,z:v.z/m}; }
+function bodyR(){ return cfg.bodyRadius; }
+function isFormingOrder(){ return CMD.order==='form_line'||CMD.order==='form_block'||CMD.order==='rally'||CMD.order==='hold'; }
+function facingVectors(theta){
+  const f=theta!=null?theta:CMD.facing;
+  const fwd={x:Math.sin(f), y:0, z:Math.cos(f)};
+  const right={x:Math.cos(f), y:0, z:-Math.sin(f)};
+  return {fwd, right};
+}
+
+const obstacles=[
+  {x:-25,z:24,r:13,kind:'hill'},{x:31,z:-23,r:11,kind:'hill'},
+  {x:-23,z:-15,r:5.9,kind:'ruin',sx:7,sz:4,rot:.55},{x:25,z:18,r:5.0,kind:'ruin',sx:5,sz:5,rot:-.25},
+  {x:-10,z:30,r:2.8,kind:'rock'},{x:13,z:-27,r:2.4,kind:'rock'},{x:35,z:-4,r:2.2,kind:'rock'}
+];
+
+function avoidSpawn(x,z){
+  const r=bodyR();
+  for(const o of obstacles){ if(o.kind==='hill') continue; if(Math.hypot(x-o.x,z-o.z)<o.r+r+.8) return false; }
+  return Math.abs(x)<58 && Math.abs(z)<58;
+}
+function safeSpawn(wide=false){
+  for(let k=0;k<800;k++){
+    const rr=wide?rand(18,54):rand(5,31), a=rand(0,Math.PI*2);
+    const x=Math.cos(a)*rr+rand(-4,4), z=Math.sin(a)*rr+rand(-4,4);
+    if(avoidSpawn(x,z)) return {x,z};
+  }
+  return {x:rand(-45,45), z:rand(-45,45)};
+}
+
+function makeSoldier(i, p, role){
+  return {
+    id:i, role:role||'legionary', isLeader:role==='centurion', dead:false,
+    x:p.x, z:p.z, vx:0, vz:0,
+    heading:rand(-Math.PI,Math.PI), state:STATE.HOLDING, stateTime:0,
+    faceMode:'unit', needMove:false,
+    travelHeading:0, errorMag:0, latticeErr:0, solid:false,
+    targetX:p.x, targetZ:p.z, slotDist:0,
+    jamTimer:0, jamSide:1, intentSp:0, nearSlotTime:0,
+    speed:0, phase:rand(0,Math.PI*2),
+    discipline:clamp(rand(.85,1.15)+(role==='centurion'?.15:0),.7,1.35),
+    awareness:clamp(rand(.85,1.15)+(role==='centurion'?.1:0),.7,1.3),
+    jitter:rand(0,Math.PI*2), lat:0, dep:0,
+    // centurion-only
+    coState: role==='centurion' ? CO.IDLE : null,
+    coStateTime:0,
+    postX:p.x, postZ:p.z,
+    intendedFacing:0
+  };
+}
+
+function rebuildSoldiers(){
+  soldiers=[];
+  cfg.count=Number(document.getElementById('count').value);
+  // Centurion first, then men
+  const cp=safeSpawn(false);
+  centurion=makeSoldier(0, cp, 'centurion');
+  soldiers.push(centurion);
+  for(let i=1;i<cfg.count;i++) soldiers.push(makeSoldier(i, safeSpawn(false), 'legionary'));
+  resetCommand('hold');
+  plantClock=-1; orderClock=0; time=0;
+  for(let k=0;k<10;k++) resolveHardCollisions();
+}
+
+function resetCommand(order){
+  CMD.order=order||'hold';
+  CMD.facing=cfg.facing;
+  CMD.spacing=cfg.spacing;
+  CMD.depthPref=cfg.command==='block'?CCFG.formBlockDepth:CCFG.formLineDepth;
+  CMD.urgency=1;
+  CMD.age=0;
+  CMD.live=!!(centurion && !centurion.dead);
+  if(centurion && !centurion.dead){
+    CMD.anchorX=centurion.x; CMD.anchorZ=centurion.z;
+  }
+}
+
+function scatter(){
+  for(const s of soldiers){
+    if(s.dead) continue;
+    // Keep CO near centerish so he can re-plant; scatter the men hard
+    const p=s.isLeader ? safeSpawn(false) : safeSpawn(true);
+    s.x=p.x; s.z=p.z; s.vx=0; s.vz=0;
+    s.heading=rand(-Math.PI,Math.PI); s.state=STATE.HOLDING; s.stateTime=0; s.solid=false;
+    s.faceMode='unit'; s.needMove=false; s.nearSlotTime=0; s.jamTimer=0;
+    s.slotDist=0; s.targetX=s.x; s.targetZ=s.z;
+  }
+  if(centurion && !centurion.dead){
+    centurion.coState=cfg.autoPlant ? CO.ASSESS : CO.IDLE;
+    centurion.coStateTime=0;
+    plantClock=-1;
+  }
+  resetCommand(cfg.autoPlant ? 'rally' : 'loose');
+  if(!cfg.autoPlant) CMD.order='loose';
+  orderClock=0; time=0;
+  for(let k=0;k<8;k++) resolveHardCollisions();
+}
+
+function setFormation(cmd){
+  cfg.command=cmd;
+  document.getElementById('formLine').classList.toggle('active', cmd==='line');
+  document.getElementById('formBlock').classList.toggle('active', cmd==='block');
+  document.getElementById('formLoose').classList.toggle('active', cmd==='loose');
+  if(cmd==='loose'){
+    issuePlayerOrder('loose');
+  } else if(centurion && !centurion.dead){
+    // Player wants a formation type — centurion will form after rally if needed
+    CMD.depthPref = cmd==='block' ? CCFG.formBlockDepth : CCFG.formLineDepth;
+    if(CMD.order==='hold' || CMD.order==='form_line' || CMD.order==='form_block'){
+      issuePlayerOrder(cmd==='block'?'form_block':'form_line');
+    }
+  }
+}
+
+function issuePlayerOrder(order){
+  if(!centurion || centurion.dead){
+    // No CO: only loose milling / residual packet decays
+    if(order==='loose'){ CMD.order='loose'; CMD.live=false; }
+    return;
+  }
+  orderClock=0;
+  if(order==='loose'){
+    CMD.order='loose'; CMD.live=true;
+    centurion.coState=CO.IDLE; centurion.coStateTime=0;
+    for(const s of soldiers){ if(!s.dead) s.solid=false; }
+    return;
+  }
+  if(order==='rally'){
+    CMD.order='rally'; CMD.live=true;
+    centurion.coState=CO.ASSESS; centurion.coStateTime=0;
+    plantClock=-1;
+    return;
+  }
+  // form_line / form_block
+  CMD.depthPref = order==='form_block' ? CCFG.formBlockDepth : CCFG.formLineDepth;
+  cfg.command = order==='form_block' ? 'block' : 'line';
+  document.getElementById('formLine').classList.toggle('active', cfg.command==='line');
+  document.getElementById('formBlock').classList.toggle('active', cfg.command==='block');
+  document.getElementById('formLoose').classList.toggle('active', false);
+  // If already planted and men nearby, go straight to form; else rally first
+  const near=countNearAnchor(cfg.rallyRadius);
+  if(centurion.coState===CO.HOLD || centurion.coState===CO.CALL_FORM || near > soldiers.filter(s=>!s.dead&&!s.isLeader).length*0.4){
+    CMD.order=order; CMD.live=true;
+    centurion.coState=CO.CALL_FORM; centurion.coStateTime=0;
+    publishAnchorFromCenturion();
+  } else {
+    CMD.order='rally'; CMD.live=true;
+    centurion.coState=CO.ASSESS; centurion.coStateTime=0;
+    plantClock=-1;
+    // remember desired form after rally
+    centurion._pendingForm=order;
+  }
+}
+
+function rotateFacing(d){
+  cfg.facing+=d;
+  CMD.facing=cfg.facing;
+  if(centurion && !centurion.dead){
+    centurion.intendedFacing=cfg.facing;
+    if(centurion.coState===CO.HOLD || centurion.coState===CO.CALL_FORM || centurion.coState===CO.PLANT || centurion.coState===CO.CALL_RALLY){
+      // re-face in place
+      centurion.faceMode='unit';
+      setState(centurion, STATE.TURNING);
+    }
+  }
+  for(const s of soldiers){
+    if(s.dead||s.isLeader) continue;
+    if(s.solid || s.state===STATE.HOLDING){ s.solid=false; setState(s, STATE.TURNING); }
+  }
+}
+
+function killCenturion(){
+  if(!centurion || centurion.dead) return;
+  centurion.dead=true;
+  centurion.coState=CO.DEAD;
+  centurion.vx=0; centurion.vz=0; centurion.speed=0;
+  CMD.live=false;
+  // Order packet freezes last anchor; men lose authoritative form after a beat → mill toward friends
+  // Keep last anchor briefly so they clump, then degrade
+  centurion._deathAge=0;
+}
+
+function reviveCenturion(){
+  if(!centurion) return;
+  if(centurion.dead){
+    centurion.dead=false;
+    const p=safeSpawn(false);
+    centurion.x=p.x; centurion.z=p.z; centurion.vx=0; centurion.vz=0;
+    centurion.heading=cfg.facing;
+  }
+  centurion.coState=CO.ASSESS; centurion.coStateTime=0;
+  centurion.solid=false; setState(centurion, STATE.TURNING);
+  plantClock=-1;
+  CMD.live=true; CMD.order='rally';
+  publishAnchorFromCenturion();
+}
+
+function publishAnchorFromCenturion(){
+  if(!centurion || centurion.dead) return;
+  CMD.anchorX=centurion.x;
+  CMD.anchorZ=centurion.z;
+  CMD.facing=centurion.intendedFacing!=null?centurion.intendedFacing:cfg.facing;
+  CMD.spacing=cfg.spacing;
+  CMD.age=0;
+}
+
+function countNearAnchor(r){
+  let n=0;
+  for(const s of soldiers){
+    if(s.dead||s.isLeader) continue;
+    if(dist2(s.x,s.z,CMD.anchorX,CMD.anchorZ) <= r) n++;
+  }
+  return n;
+}
+
+function livingMen(){
+  let n=0; for(const s of soldiers) if(!s.dead && !s.isLeader) n++; return Math.max(1,n);
+}
+
+/** Pick rally ground near densest knot of living men (not pure centroid of outliers). */
+function pickRallyPost(c){
+  const men=soldiers.filter(s=>!s.dead && !s.isLeader);
+  if(!men.length) return {x:c.x, z:c.z};
+  // Density at sample points: each man + a few midpoints
+  let bestX=men[0].x, bestZ=men[0].z, bestScore=-1;
+  const samples=[];
+  for(const m of men) samples.push({x:m.x,z:m.z});
+  // Also sample mean of nearest-K for a few seeds
+  for(let i=0;i<Math.min(12, men.length);i++){
+    const seed=men[(i*7)%men.length];
+    let sx=0,sz=0,k=0;
+    for(const m of men){
+      if(dist2(seed.x,seed.z,m.x,m.z)<CCFG.postPickRadius){ sx+=m.x; sz+=m.z; k++; }
+    }
+    if(k) samples.push({x:sx/k, z:sz/k});
+  }
+  for(const p of samples){
+    let score=0;
+    for(const m of men){
+      const d=dist2(p.x,p.z,m.x,m.z);
+      if(d<CCFG.postPickRadius) score += 1/(1+d*0.15);
+    }
+    // Prefer slightly toward current facing front of the knot
+    if(score>bestScore){ bestScore=score; bestX=p.x; bestZ=p.z; }
+  }
+  // Offset: plant at front edge of the knot so men form behind him
+  const {fwd}=facingVectors(cfg.facing);
+  const frontPush = cfg.spacing * 0.4;
+  return { x:bestX + fwd.x*frontPush, z:bestZ + fwd.z*frontPush };
+}
+
+// ——— Centurion brain ———
+function updateCenturion(dt){
+  if(!centurion) return;
+  if(centurion.dead){
+    centurion._deathAge=(centurion._deathAge||0)+dt;
+    // After death, freeze anchor; eventually men treat command as soft mill
+    if(centurion._deathAge > 2.5 && CMD.order!=='loose'){
+      // degrade to informal clump around last anchor
+      if(CMD.order==='form_line'||CMD.order==='form_block'||CMD.order==='hold') CMD.order='rally';
+    }
+    if(centurion._deathAge > 6) CMD.order='loose';
+    centurion.vx*=Math.exp(-4*dt); centurion.vz*=Math.exp(-4*dt);
+    centurion.speed=Math.hypot(centurion.vx,centurion.vz);
+    return;
+  }
+
+  centurion.coStateTime += dt;
+  CMD.age += dt;
+  const c=centurion;
+  c.intendedFacing = cfg.facing;
+
+  // Publish anchor from body while planted / calling
+  if(c.coState===CO.PLANT || c.coState===CO.CALL_RALLY || c.coState===CO.CALL_FORM || c.coState===CO.HOLD){
+    publishAnchorFromCenturion();
+  }
+
+  const menN=livingMen();
+  const near=countNearAnchor(cfg.rallyRadius);
+  const nearFrac=near/menN;
+  const formNear=countNearAnchor(cfg.rallyRadius*0.65)/menN;
+
+  switch(c.coState){
+    case CO.IDLE:{
+      // stay put; hold order if already formed
+      c.targetX=c.x; c.targetZ=c.z; c.slotDist=0;
+      c.needMove=false; c.faceMode='unit';
+      if(CMD.order==='loose') setState(c, STATE.MILLING);
+      else {
+        const headErr=Math.abs(angleDiff(c.intendedFacing, c.heading));
+        if(headErr > LOCO.faceAlignDeg*Math.PI/180) setState(c, STATE.TURNING);
+        else setState(c, STATE.HOLDING);
+        c.solid=true;
+      }
+      break;
+    }
+    case CO.ASSESS:{
+      c.needMove=false; c.faceMode='unit';
+      setState(c, STATE.TURNING);
+      if(c.coStateTime >= CCFG.assessTime){
+        const post=pickRallyPost(c);
+        c.postX=post.x; c.postZ=post.z;
+        c.targetX=post.x; c.targetZ=post.z;
+        c.coState=CO.MOVE_TO_POST; c.coStateTime=0;
+        CMD.order='rally'; CMD.live=true;
+        // early broadcast: men start moving toward intended post while he runs
+        CMD.anchorX=post.x; CMD.anchorZ=post.z; CMD.facing=cfg.facing;
+      }
+      break;
+    }
+    case CO.MOVE_TO_POST:{
+      c.targetX=c.postX; c.targetZ=c.postZ;
+      c.slotDist=dist2(c.x,c.z,c.postX,c.postZ);
+      CMD.anchorX=c.postX; CMD.anchorZ=c.postZ; // men head to post, not chasing moving CO
+      if(c.slotDist < 0.55){
+        c.coState=CO.PLANT; c.coStateTime=0;
+        c.vx*=0.3; c.vz*=0.3;
+      } else {
+        c.needMove=true; c.faceMode='travel';
+        c.travelHeading=Math.atan2(c.postX-c.x, c.postZ-c.z);
+        setState(c, Math.abs(angleDiff(c.travelHeading,c.heading))>LOCO.moveAlignDeg*Math.PI/180 ? STATE.TURNING : STATE.FORMING_UP);
+      }
+      break;
+    }
+    case CO.PLANT:{
+      c.targetX=c.postX; c.targetZ=c.postZ;
+      c.slotDist=dist2(c.x,c.z,c.postX,c.postZ);
+      c.needMove=c.slotDist>0.25;
+      c.faceMode=c.needMove?'travel':'unit';
+      if(c.needMove) c.travelHeading=Math.atan2(c.postX-c.x, c.postZ-c.z);
+      const headErr=Math.abs(angleDiff(c.intendedFacing, c.heading));
+      if(!c.needMove && headErr > CCFG.plantFaceTol) setState(c, STATE.TURNING);
+      else if(!c.needMove) setState(c, STATE.HOLDING);
+      publishAnchorFromCenturion();
+      if(!c.needMove && headErr <= CCFG.plantFaceTol){
+        if(plantClock<0) plantClock=time;
+        c.coState=CO.CALL_RALLY; c.coStateTime=0;
+        CMD.order='rally';
+      }
+      break;
+    }
+    case CO.CALL_RALLY:{
+      c.needMove=false; c.faceMode='unit'; c.solid=true;
+      const headErr=Math.abs(angleDiff(c.intendedFacing, c.heading));
+      if(headErr > LOCO.faceAlignDeg*Math.PI/180) setState(c, STATE.TURNING);
+      else setState(c, STATE.HOLDING);
+      publishAnchorFromCenturion();
+      CMD.order='rally';
+      // Enough mass? Form.
+      const pending=c._pendingForm || (cfg.command==='block'?'form_block':'form_line');
+      if(nearFrac >= CCFG.rallyFracToForm || c.coStateTime > 8){
+        CMD.order=pending;
+        c._pendingForm=null;
+        c.coState=CO.CALL_FORM; c.coStateTime=0;
+      }
+      break;
+    }
+    case CO.CALL_FORM:{
+      c.needMove=false; c.faceMode='unit'; c.solid=true;
+      publishAnchorFromCenturion();
+      if(CMD.order!=='form_line' && CMD.order!=='form_block'){
+        CMD.order = cfg.command==='block'?'form_block':'form_line';
+      }
+      const headErr=Math.abs(angleDiff(c.intendedFacing, c.heading));
+      if(headErr > LOCO.faceAlignDeg*Math.PI/180) setState(c, STATE.TURNING);
+      else setState(c, STATE.HOLDING);
+      // When men are mostly near and slow, HOLD
+      let avgSp=0, nn=0;
+      for(const s of soldiers){ if(s.dead||s.isLeader) continue; avgSp+=s.speed; nn++; }
+      avgSp/=Math.max(1,nn);
+      if(formNear >= CCFG.formSettleFrac && avgSp < CCFG.holdSpeed && c.coStateTime>1.2){
+        CMD.order='hold';
+        c.coState=CO.HOLD; c.coStateTime=0;
+      }
+      break;
+    }
+    case CO.HOLD:{
+      c.needMove=false; c.faceMode='unit'; c.solid=true;
+      publishAnchorFromCenturion();
+      CMD.order='hold';
+      const headErr=Math.abs(angleDiff(c.intendedFacing, c.heading));
+      if(headErr > LOCO.faceAlignDeg*Math.PI/180) setState(c, STATE.TURNING);
+      else setState(c, STATE.HOLDING);
+      // If men re-scatter badly, re-rally
+      if(nearFrac < 0.25 && c.coStateTime>1){
+        c.coState=CO.ASSESS; c.coStateTime=0;
+        CMD.order='rally';
+      }
+      break;
+    }
+    default:
+      c.coState=CO.IDLE;
+  }
+}
+
+// ——— Frame stats in command facing ———
+function frameStats(fwd, right){
+  const nAlive=soldiers.filter(s=>!s.dead).length||1;
+  let cx=0,cz=0, latSum=0, depSum=0;
+  let minLat=Infinity,maxLat=-Infinity,minDep=Infinity,maxDep=-Infinity;
+  for(const s of soldiers){
+    if(s.dead) continue;
+    const lat=(s.x-CMD.anchorX)*right.x+(s.z-CMD.anchorZ)*right.z;
+    const dep=(s.x-CMD.anchorX)*fwd.x+(s.z-CMD.anchorZ)*fwd.z;
+    s.lat=lat; s.dep=dep; cx+=s.x; cz+=s.z; latSum+=lat; depSum+=dep;
+    minLat=Math.min(minLat,lat); maxLat=Math.max(maxLat,lat);
+    minDep=Math.min(minDep,dep); maxDep=Math.max(maxDep,dep);
+  }
+  return {
+    cx:cx/nAlive, cz:cz/nAlive,
+    meanLat:latSum/nAlive, meanDep:depSum/nAlive,
+    minLat, maxLat, minDep, maxDep,
+    frontage:maxLat-minLat, depthSpan:maxDep-minDep
+  };
+}
+
+function resolveHardCollisions(){
+  const r=bodyR(), minD=r*2, minD2=minD*minD;
+  const alive=soldiers.filter(s=>!s.dead);
+  const n=alive.length;
+  let overlaps=0;
+  const collCell=Math.max(minD*1.05, 0.9);
+  for(let iter=0; iter<cfg.collisionIters; iter++){
+    rebuildSpatialGrid(collCell);
+    const inv=spatialGrid.inv, map=spatialGrid.map;
+    for(let i=0;i<n;i++){
+      const a=alive[i];
+      const ix0=Math.floor(a.x*inv), iz0=Math.floor(a.z*inv);
+      for(let dix=-1;dix<=1;dix++) for(let diz=-1;diz<=1;diz++){
+        const bucket=map.get(gridKey(ix0+dix, iz0+diz));
+        if(!bucket) continue;
+        for(let k=0;k<bucket.length;k++){
+          const b=bucket[k];
+          if(b.id<=a.id) continue;
+          let dx=b.x-a.x, dz=b.z-a.z, d2=dx*dx+dz*dz;
+          if(d2>=minD2 && d2>1e-12) continue;
+          overlaps++;
+          let d=Math.sqrt(d2);
+          if(d<1e-8){ const ang=(a.id*12.9898+b.id*78.233)%(Math.PI*2); dx=Math.cos(ang); dz=Math.sin(ang); d=1e-8; }
+          else { dx/=d; dz/=d; }
+          // Dead CO is a soft obstacle; living both push
+          const half=(minD-d)*.5;
+          if(!a.dead){ a.x-=dx*half; a.z-=dz*half; }
+          if(!b.dead){ b.x+=dx*half; b.z+=dz*half; }
+          if(!a.dead && !b.dead){
+            const closing=(b.vx-a.vx)*dx+(b.vz-a.vz)*dz;
+            if(closing<0){ const jImp=closing*.5; a.vx+=dx*jImp; a.vz+=dz*jImp; b.vx-=dx*jImp; b.vz-=dz*jImp; }
+          }
+        }
+      }
+    }
+    for(const s of alive){
+      for(const o of obstacles){
+        if(o.kind==='hill') continue;
+        const need=o.r+r; let dx=s.x-o.x, dz=s.z-o.z, d=Math.hypot(dx,dz);
+        if(d>=need) continue; overlaps++;
+        if(d<1e-8){ dx=1; dz=0; d=1e-8; } else { dx/=d; dz/=d; }
+        s.x+=dx*(need-d); s.z+=dz*(need-d);
+        const vn=s.vx*dx+s.vz*dz; if(vn<0){ s.vx-=dx*vn; s.vz-=dz*vn; }
+      }
+      const b=cfg.worldBound;
+      if(s.x>b-r){ s.x=b-r; if(s.vx>0)s.vx=0; } if(s.x<-b+r){ s.x=-b+r; if(s.vx<0)s.vx=0; }
+      if(s.z>b-r){ s.z=b-r; if(s.vz>0)s.vz=0; } if(s.z<-b+r){ s.z=-b+r; if(s.vz<0)s.vz=0; }
+    }
+  }
+  metrics.overlaps=overlaps;
+}
+
+/**
+ * Private desire: compliance + local packing under the command packet.
+ * No lattice seats.
+ */
+function computePrivateDesire(s, fwd, right, frame, dt){
+  const hardR=bodyR(), sp=cfg.spacing, sense=cfg.neighborRadius*s.awareness;
+  const press=cfg.linePressure*s.discipline;
+  let count=0, relX=0, relZ=0, depthSum=0;
+  let sepX=0, sepZ=0, travelSepX=0, travelSepZ=0;
+  let leftLat=-Infinity, rightLat=Infinity, hasL=false, hasR=false;
+  let backDep=-Infinity, frontDep=Infinity, hasB=false, hasF=false;
+  let latCrowd=0, depCrowd=0, nearDense=0, emergency=false;
+
+  const ax=CMD.anchorX, az=CMD.anchorZ;
+  const adx=ax-s.x, adz=az-s.z;
+  const anchD=Math.hypot(adx,adz);
+  s.slotDist=anchD; // reuse field as "distance to command anchor"
+  s.targetX=ax; s.targetZ=az;
+
+  const order=CMD.order;
+  const rallying = order==='rally';
+  const forming = order==='form_line' || order==='form_block';
+  const holding = order==='hold';
+  const loose = order==='loose' || !CMD.live;
+  const traveling = !s.solid && (rallying || (forming && anchD > sp*1.2) || (holding && anchD > cfg.rallyRadius*0.9));
+
+  const bubble = traveling ? LOCO.marchBubble : (hardR*2+0.3);
+  const travelGain = traveling ? LOCO.marchSepGain : 0;
+  const softPS = traveling ? Math.max(1.05, hardR*2+0.15) : cfg.personalSpace;
+
+  const nearN=queryNearbyAgentsInto(s.x,s.z,sense,_nearScratch);
+  for(let ni=0;ni<nearN;ni++){
+    const o=_nearScratch[ni];
+    if(o===s || o.dead) continue;
+    const dx=o.x-s.x, dz=o.z-s.z, d=Math.hypot(dx,dz);
+    if(d<1e-4 || d>=sense) continue;
+    count++; relX+=dx; relZ+=dz;
+    const lat=dx*right.x+dz*right.z, dep=dx*fwd.x+dz*fwd.z;
+    depthSum+=dep;
+
+    const soft=Math.max(softPS, hardR*2+0.35);
+    if(d<soft){
+      const str=(soft-d)/soft;
+      const close=d<hardR*2+0.15?2.2:1.0;
+      sepX+=-(dx/d)*str*str*close; sepZ+=-(dz/d)*str*str*close;
+    }
+    if(traveling && d<bubble){
+      const str=(bubble-d)/bubble;
+      travelSepX+=-(dx/d)*str*str; travelSepZ+=-(dz/d)*str*str;
+      // right-hand peel
+      const hf=Math.sin(s.heading), hz=Math.cos(s.heading);
+      const rf=Math.cos(s.heading), rz=-Math.sin(s.heading);
+      if(dx*hf+dz*hz>0.15){ travelSepX+=rf*str*0.9; travelSepZ+=rz*str*0.9; }
+    }
+    if(d<sp*0.95) nearDense++;
+
+    // Lateral / file neighbors for packing
+    const band=Math.max(sp*.6, hardR*1.7);
+    if(Math.abs(dep)<band){
+      if(lat<0 && lat>leftLat){ leftLat=lat; hasL=true; }
+      if(lat>0 && lat<rightLat){ rightLat=lat; hasR=true; }
+      const crowded=sp*.88, absLat=Math.abs(lat);
+      if(absLat<crowded){
+        const side=absLat<.035?(s.id<o.id?-1:1):(lat>0?-1:1);
+        latCrowd+=side*Math.pow((crowded-absLat)/crowded,2);
+      }
+    }
+    if(Math.abs(lat)<band){
+      if(dep<0 && dep>backDep){ backDep=dep; hasB=true; }
+      if(dep>0 && dep<frontDep){ frontDep=dep; hasF=true; }
+    }
+  }
+
+  let dx=0, dz=0;
+  let localErr=anchD;
+
+  if(loose){
+    // Militia clump: stick to friends, mild wander
+    if(count){
+      const m=Math.hypot(relX,relZ);
+      if(m>.1){ dx+=(relX/m)*cfg.cohesion*2.4; dz+=(relZ/m)*cfg.cohesion*2.4; }
+    } else if(CMD.age < 8){
+      // last known anchor as weak attractor briefly
+      if(anchD>1){ dx+=adx/anchD*cfg.cohesion*1.2; dz+=adz/anchD*cfg.cohesion*1.2; }
+    }
+    dx+=Math.cos(time*.65+s.jitter)*.45; dz+=Math.sin(time*.59+s.jitter)*.45;
+  } else if(rallying){
+    // Run to anchor; stop in the mass around it
+    const stopR = cfg.rallyRadius * 0.45;
+    if(anchD > stopR){
+      const k=press*0.55;
+      dx+=adx/Math.max(0.2,anchD)*k*(0.5+0.5*Math.min(1,anchD/8));
+      dz+=adz/Math.max(0.2,anchD)*k*(0.5+0.5*Math.min(1,anchD/8));
+    } else {
+      // inside mass: mild cohesion + face later via FSM
+      if(count){
+        const m=Math.hypot(relX,relZ);
+        if(m>.2 && count<4){ dx+=(relX/m)*cfg.cohesion*1.5; dz+=(relZ/m)*cfg.cohesion*1.5; }
+      }
+      // slight pull toward anchor center so blob densifies
+      if(anchD>sp*0.8){ dx+=adx*press*0.04; dz+=adz*press*0.04; }
+    }
+    localErr=Math.max(0, anchD-stopR);
+  } else if(forming || holding){
+    // Near anchor first
+    const formR = cfg.rallyRadius * (forming?0.85:0.7);
+    if(anchD > formR){
+      dx+=adx/Math.max(0.2,anchD)*press*0.5;
+      dz+=adz/Math.max(0.2,anchD)*press*0.5;
+      localErr=anchD;
+    } else {
+      // Local pack into line/block relative to command facing
+      const depthWant = CMD.depthPref * sp;
+      // Relative position to anchor in command frame
+      const myLat=s.lat, myDep=s.dep;
+
+      if(count){
+        // Space to L/R neighbors
+        const spaceK=press*.14;
+        if(hasR){ const e=clamp(rightLat-sp,-2.5,2.5); dx+=right.x*e*spaceK; dz+=right.z*e*spaceK; localErr+=Math.abs(e); }
+        if(hasL){ const e=clamp(leftLat+sp,-2.5,2.5); dx+=right.x*e*spaceK; dz+=right.z*e*spaceK; localErr+=Math.abs(e); }
+        dx+=right.x*latCrowd*press*.14; dz+=right.z*latCrowd*press*.14;
+
+        if(CMD.order==='form_line' || (holding && CMD.depthPref<=1)){
+          // Collapse depth toward a rank just behind the CO (negative dep = behind)
+          // Centurion stands at front: men prefer dep in [-0.5sp, -0.2sp] band mean
+          const meanDepth=depthSum/count;
+          dx+=fwd.x*meanDepth*press*.11;
+          dz+=fwd.z*meanDepth*press*.11;
+          // Prefer slightly behind anchor
+          const wantDep = -sp*0.35;
+          dx+=fwd.x*(wantDep - myDep)*press*.05;
+          dz+=fwd.z*(wantDep - myDep)*press*.05;
+          localErr+=Math.abs(meanDepth)*0.5;
+        } else {
+          // Block: keep files + ranks
+          if(hasF){ const e=clamp(frontDep-sp,-2.2,2.2); dx+=fwd.x*e*spaceK; dz+=fwd.z*e*spaceK; localErr+=Math.abs(e); }
+          if(hasB){ const e=clamp(backDep+sp,-2.2,2.2); dx+=fwd.x*e*spaceK; dz+=fwd.z*e*spaceK; localErr+=Math.abs(e); }
+          // Soft depth envelope behind CO
+          if(myDep > sp*0.4){ dx+=-fwd.x*(myDep-sp*0.4)*press*.08; dz+=-fwd.z*(myDep-sp*0.4)*press*.08; }
+          if(myDep < -depthWant - sp){ dx+=-fwd.x*(myDep + depthWant)*press*.06; dz+=-fwd.z*(myDep + depthWant)*press*.06; }
+        }
+
+        // Extend frontage if no L or R neighbor and we're forming
+        if(forming){
+          if(!hasL){ dx+=-right.x*press*.08; dz+=-right.z*press*.08; }
+          if(!hasR){ dx+= right.x*press*.08; dz+= right.z*press*.08; }
+        }
+
+        // Isolation glue
+        if(count<2){
+          const m=Math.hypot(relX,relZ);
+          if(m>.2){ dx+=(relX/m)*cfg.cohesion*2; dz+=(relZ/m)*cfg.cohesion*2; }
+        }
+      } else {
+        // alone but under form: go to anchor
+        if(anchD>0.5){ dx+=adx/anchD*press*0.4; dz+=adz/anchD*press*0.4; }
+      }
+    }
+  }
+
+  // Separation always
+  const sepScale = s.solid ? 0.35 : 0.72;
+  dx+=sepX*cfg.separation*sepScale; dz+=sepZ*cfg.separation*sepScale;
+  if(traveling && travelGain>0){ dx+=travelSepX*cfg.separation*travelGain; dz+=travelSepZ*cfg.separation*travelGain; }
+
+  // Obstacles
+  const look = traveling ? LOCO.obstacleLookahead : 1.15;
+  for(const o of obstacles){
+    if(o.kind==='hill') continue;
+    const ox=s.x-o.x, oz=s.z-o.z, d=Math.hypot(ox,oz), ar=o.r+hardR+look;
+    if(d<ar && d>1e-4){
+      const str=Math.pow((ar-d)/ar, 2);
+      dx+=ox/d*cfg.obstacleAvoid*1.55*str;
+      dz+=oz/d*cfg.obstacleAvoid*1.55*str;
+      if(d < o.r*0.85) emergency=true;
+    }
+  }
+  const bound=cfg.worldBound;
+  if(Math.abs(s.x)>bound-2) dx+=-Math.sign(s.x)*1.2;
+  if(Math.abs(s.z)>bound-2) dz+=-Math.sign(s.z)*1.2;
+
+  // Jam divert
+  const mag0=Math.hypot(dx,dz);
+  s.intentSp=clamp(mag0*1.1, 0.4, LOCO.forwardWalk);
+  if(traveling && anchD>sp && s.speed < s.intentSp*LOCO.jamSpeedFrac && nearDense>=1)
+    s.jamTimer=Math.min(2.5,(s.jamTimer||0)+dt);
+  else s.jamTimer=Math.max(0,(s.jamTimer||0)-dt*0.85);
+  if((s.jamTimer||0)>=LOCO.jamTime){
+    const gm=Math.hypot(adx,adz)||1;
+    const rx=adz/gm, rz=-adx/gm;
+    dx+=rx*press*0.35; dz+=rz*press*0.35;
+  }
+
+  // Bond: near mass + has neighbors + roughly facing when holding
+  const inMass = anchD < cfg.rallyRadius * (holding?0.75:0.9);
+  const packed = count >= (CMD.depthPref<=1?1:2) && (hasL||hasR || CMD.order==='rally');
+  const localQ = clamp(1 - localErr/(sp*2.2), 0, 1);
+  const bondGood = (holding||forming) && inMass && packed && localQ>0.35 && mag0 < LOCO.holdExit*1.3;
+
+  s.latticeErr=localErr;
+  s.localQ=localQ;
+
+  if((s.solid||bondGood) && !emergency && mag0 < LOCO.solidBreak*1.2){ dx=0; dz=0; }
+
+  return { dx, dz, emergency, count, bondGood, localErr, localQ, traveling, inMass };
+}
+
+function computeCenturionDesire(s, dt){
+  // Simple go-to-post / hold; brain already set targets
+  let dx=0, dz=0, emergency=false;
+  const hardR=bodyR();
+  if(s.coState===CO.MOVE_TO_POST || (s.coState===CO.PLANT && s.needMove)){
+    const mx=s.targetX-s.x, mz=s.targetZ-s.z, d=Math.hypot(mx,mz);
+    if(d>0.15){ dx=mx/d*cfg.linePressure*0.7; dz=mz/d*cfg.linePressure*0.7; }
+  }
+  // Soft sep from men
+  const nearN=queryNearbyAgentsInto(s.x,s.z,cfg.spacing*2.2,_nearScratch);
+  for(let i=0;i<nearN;i++){
+    const o=_nearScratch[i];
+    if(o===s||o.dead) continue;
+    const ox=s.x-o.x, oz=s.z-o.z, d=Math.hypot(ox,oz);
+    const soft=Math.max(cfg.personalSpace, hardR*2+0.2);
+    if(d<soft && d>1e-4){
+      const str=(soft-d)/soft;
+      dx+=ox/d*str*str*cfg.separation*0.5;
+      dz+=oz/d*str*str*cfg.separation*0.5;
+    }
+  }
+  for(const o of obstacles){
+    if(o.kind==='hill') continue;
+    const ox=s.x-o.x, oz=s.z-o.z, d=Math.hypot(ox,oz), ar=o.r+hardR+1.2;
+    if(d<ar && d>1e-4){ const str=Math.pow((ar-d)/ar,2); dx+=ox/d*cfg.obstacleAvoid*1.4*str; dz+=oz/d*cfg.obstacleAvoid*1.4*str; if(d<o.r*0.85) emergency=true; }
+  }
+  s.slotDist=dist2(s.x,s.z,s.targetX,s.targetZ);
+  s.latticeErr=s.slotDist;
+  const bondGood = (s.coState===CO.HOLD || s.coState===CO.CALL_RALLY || s.coState===CO.CALL_FORM || s.coState===CO.IDLE) && Math.hypot(dx,dz)<0.3;
+  if(bondGood && !emergency){ dx=0; dz=0; }
+  return { dx, dz, emergency, count:0, bondGood, localErr:s.slotDist, localQ:1, traveling:s.needMove, inMass:true };
+}
+
+function setState(s, st){ if(s.state!==st){ s.state=st; s.stateTime=0; } }
+
+function updateFSM(s, desire, dt){
+  if(s.dead){ setState(s, STATE.HOLDING); s.needMove=false; return; }
+  // Centurion FSM for body states is mostly driven in updateCenturion; still run loco FSM lightly
+  if(s.isLeader){
+    const mag=Math.hypot(desire.dx, desire.dz);
+    s.errorMag=mag;
+    if(desire.emergency){ setState(s, STATE.EVADING); s.needMove=true; s.faceMode='travel'; s.travelHeading=Math.atan2(desire.dx,desire.dz); return; }
+    if(s.needMove && mag>0.08){
+      s.faceMode='travel';
+      s.travelHeading=Math.atan2(desire.dx, desire.dz);
+      const headTravel=Math.abs(angleDiff(s.travelHeading,s.heading));
+      if(headTravel > LOCO.moveAlignDeg*Math.PI/180) setState(s, STATE.TURNING);
+      else setState(s, STATE.FORMING_UP);
+    } else {
+      s.faceMode='unit';
+      s.needMove=false;
+      const headForm=Math.abs(angleDiff(CMD.facing, s.heading));
+      if(headForm > LOCO.faceAlignDeg*Math.PI/180) setState(s, STATE.TURNING);
+      else { setState(s, STATE.HOLDING); s.solid=true; }
+    }
+    return;
+  }
+
+  const mag=Math.hypot(desire.dx, desire.dz);
+  s.errorMag=mag;
+
+  if(desire.emergency){
+    s.solid=false; s.needMove=true; s.faceMode='travel';
+    setState(s, STATE.EVADING);
+    s.travelHeading=Math.atan2(desire.dx, desire.dz);
+    return;
+  }
+  if(s.state===STATE.EVADING) setState(s, STATE.FORMING_UP);
+
+  if(CMD.order==='loose' || !CMD.live && CMD.order!=='rally'){
+    s.solid=false; s.needMove=mag>0.08; s.faceMode='travel';
+    setState(s, STATE.MILLING);
+    if(mag>0.08) s.travelHeading=Math.atan2(desire.dx, desire.dz);
+    return;
+  }
+
+  // Arrive near mass
+  const onPost = desire.inMass && mag < LOCO.holdEnter*1.4;
+  if(onPost && s.speed<0.55) s.nearSlotTime+=dt;
+  else s.nearSlotTime=Math.max(0, s.nearSlotTime-dt*0.5);
+  const forceSettle = s.nearSlotTime >= 0.7 && (CMD.order==='hold'||CMD.order==='form_line'||CMD.order==='form_block');
+
+  const commit = forceSettle || onPost ? LOCO.moveCommit*1.8 : LOCO.moveCommit;
+  if(mag>=commit && !forceSettle){
+    const nh=Math.atan2(desire.dx, desire.dz);
+    if(!s.needMove || s.travelHeading==null) s.travelHeading=nh;
+    else {
+      const dH=Math.abs(angleDiff(nh, s.travelHeading));
+      if(dH<0.55 || mag>commit*2) s.travelHeading=nh;
+      else s.travelHeading += angleDiff(nh,s.travelHeading)*0.3;
+    }
+    s.needMove=true;
+  } else s.needMove=false;
+
+  if(s.solid){
+    if(mag>LOCO.solidBreak*1.35 || s.slotDist>cfg.rallyRadius){ s.solid=false; s.nearSlotTime=0; }
+  } else if((desire.bondGood||forceSettle) && mag<LOCO.holdExit*1.2){
+    s.solid=true;
+  }
+
+  const faceA=LOCO.faceAlignDeg*Math.PI/180;
+  const moveA=LOCO.moveAlignDeg*Math.PI/180;
+  const headForm=Math.abs(angleDiff(CMD.facing, s.heading));
+  const headTravel=Math.abs(angleDiff(s.travelHeading, s.heading));
+
+  // When in mass under form/hold/rally-arrived: dress unit facing
+  if((onPost||forceSettle||(s.solid&&desire.bondGood)) && (CMD.order==='hold'||CMD.order==='form_line'||CMD.order==='form_block'||(CMD.order==='rally'&&desire.inMass))){
+    s.faceMode='unit'; s.needMove=false; s.travelHeading=CMD.facing;
+    if(headForm > faceA*1.1) setState(s, STATE.TURNING);
+    else { setState(s, STATE.HOLDING); s.solid=true; }
+    if(s.state===STATE.TURNING && s.stateTime>1.2){ s.heading=CMD.facing; setState(s, STATE.HOLDING); s.solid=true; }
+    return;
+  }
+
+  s.faceMode='travel';
+  let next=s.state;
+  if(s.state===STATE.HOLDING || s.state===STATE.MILLING || s.state===STATE.EVADING){
+    next = headTravel>moveA ? STATE.TURNING : (mag<LOCO.adjustEnter?STATE.ADJUSTING:STATE.FORMING_UP);
+  } else if(s.state===STATE.TURNING){
+    if(headTravel<=moveA) next=mag<LOCO.adjustEnter?STATE.ADJUSTING:STATE.FORMING_UP;
+    if(s.stateTime>1.8) next=STATE.FORMING_UP;
+  } else if(s.state===STATE.FORMING_UP){
+    if(mag<LOCO.moveCommit){ s.needMove=false; s.faceMode='unit'; next=headForm>faceA?STATE.TURNING:STATE.HOLDING; }
+    else if(headTravel>moveA*1.35) next=STATE.TURNING;
+    else if(mag<LOCO.adjustEnter) next=STATE.ADJUSTING;
+  } else if(s.state===STATE.ADJUSTING){
+    if(mag<LOCO.moveCommit){ s.needMove=false; s.faceMode='unit'; next=headForm>faceA?STATE.TURNING:STATE.HOLDING; }
+    else if(headTravel>moveA*1.35) next=STATE.TURNING;
+    else if(mag>LOCO.adjustEnter*1.15) next=STATE.FORMING_UP;
+  }
+  if(next!==s.state && s.stateTime<0.10) next=s.state;
+  setState(s, next);
+}
+
+function applyHeadedLocomotion(s, desire, dt){
+  if(s.dead){ s.vx=0; s.vz=0; s.speed=0; return; }
+  s.stateTime+=dt;
+  const mag=Math.hypot(desire.dx, desire.dz);
+  const disc=s.discipline;
+  const seated = desire.inMass && !s.needMove;
+  const wantHeading = (s.faceMode==='travel' && s.needMove && !seated) ? s.travelHeading : CMD.facing;
+
+  let intentSpeed=0;
+  if(s.state===STATE.FORMING_UP && s.needMove){
+    intentSpeed=clamp(mag*1.55, LOCO.forwardShuffle, LOCO.forwardRun);
+    if(mag<2.2) intentSpeed=Math.min(intentSpeed, LOCO.forwardWalk);
+    if(mag<1.0) intentSpeed=Math.min(intentSpeed, LOCO.forwardShuffle*1.15);
+  } else if(s.state===STATE.ADJUSTING && s.needMove){
+    intentSpeed=clamp(mag*1.0, 0.12, LOCO.forwardShuffle);
+  } else if(s.state===STATE.MILLING){
+    intentSpeed=clamp(mag*1.0, 0.10, LOCO.forwardWalk*0.85);
+  } else if(s.state===STATE.EVADING){
+    intentSpeed=LOCO.emergency;
+  }
+
+  const headErrBefore=angleDiff(wantHeading, s.heading);
+  const alignBefore=Math.cos(headErrBefore);
+  const faceGate=s.state===STATE.EVADING?0.15:0.28;
+  if(intentSpeed>0 && alignBefore<faceGate) intentSpeed*=smoothstep(clamp((alignBefore+0.2)/(1+faceGate),0,1))*0.35;
+  else if(intentSpeed>0) intentSpeed*=smoothstep(clamp((alignBefore-faceGate)/(1-faceGate),0,1));
+
+  const curSp0=Math.hypot(s.vx,s.vz);
+  const runFrac=smoothstep(clamp(curSp0/LOCO.forwardRun,0,1));
+  let turnRate=lerp(LOCO.turnStand, LOCO.turnRun, runFrac);
+  if(s.state===STATE.TURNING) turnRate=lerp(LOCO.turnStand*1.15, LOCO.turnWalk*0.75, runFrac);
+  else if(s.state===STATE.HOLDING) turnRate=lerp(LOCO.turnStand, LOCO.turnWalk, runFrac*0.5);
+  else if(s.state===STATE.FORMING_UP||s.state===STATE.ADJUSTING) turnRate=lerp(LOCO.turnWalk, LOCO.turnRun, runFrac);
+  turnRate*=(0.88+0.24*disc);
+  {
+    const err=angleDiff(wantHeading, s.heading);
+    const step=turnRate*dt;
+    if(Math.abs(err)<=step || Math.abs(err)<0.03) s.heading=wantHeading;
+    else s.heading+=clamp(err,-step,step);
+  }
+
+  const hf=Math.sin(s.heading), hz=Math.cos(s.heading);
+  const rf=Math.cos(s.heading), rz=-Math.sin(s.heading);
+  const align=Math.cos(angleDiff(wantHeading, s.heading));
+
+  let dvx=0, dvz=0;
+  if(s.state===STATE.EVADING){
+    const tm=Math.hypot(desire.dx,desire.dz)||1;
+    dvx=(desire.dx/tm)*intentSpeed; dvz=(desire.dz/tm)*intentSpeed;
+  } else if(intentSpeed>1e-4){
+    const drive=intentSpeed*clamp(align,0,1);
+    dvx=hf*drive; dvz=hz*drive;
+  }
+
+  const curSp=Math.hypot(s.vx,s.vz);
+  const desSp=Math.hypot(dvx,dvz);
+  const slowing=desSp<curSp-0.05;
+  const almostStopped=curSp<LOCO.forwardShuffle*0.5;
+  let aMax;
+  if(s.state===STATE.TURNING) aMax=lerp(LOCO.brakeIdle, LOCO.brakeTurn, runFrac)*(0.85+0.2*disc);
+  else if(s.state===STATE.HOLDING || (s.solid && intentSpeed<0.05)) aMax=(almostStopped?LOCO.brakeIdle:lerp(LOCO.brakeHold,LOCO.brakeRun,runFrac))*(0.9+0.25*disc);
+  else if(slowing) aMax=(curSp>LOCO.forwardWalk?LOCO.brakeRun:LOCO.brakeWalk)*(0.9+0.2*disc);
+  else aMax=(desSp>LOCO.forwardWalk?LOCO.accelRun:LOCO.accelWalk)*(0.9+0.2*disc);
+
+  let ex=dvx-s.vx, ez=dvz-s.vz, eMag=Math.hypot(ex,ez);
+  const maxDelta=aMax*dt;
+  if(eMag>maxDelta && eMag>1e-8){ s.vx+=ex/eMag*maxDelta; s.vz+=ez/eMag*maxDelta; }
+  else { s.vx=dvx; s.vz=dvz; }
+
+  const drag=Math.exp(-LOCO.coastDrag*dt);
+  s.vx*=drag; s.vz*=drag;
+
+  const sp1=Math.hypot(s.vx,s.vz);
+  if(sp1>LOCO.stopSpeed && intentSpeed>0.05 && s.state!==STATE.EVADING){
+    const vAng=Math.atan2(s.vx,s.vz);
+    const blend=1-Math.exp(-LOCO.yawCoupling*dt*clamp(align,0.15,1));
+    const newAng=vAng+angleDiff(s.heading,vAng)*blend;
+    s.vx=Math.sin(newAng)*sp1; s.vz=Math.cos(newAng)*sp1;
+  }
+  if(s.state!==STATE.EVADING){
+    const vFwd=s.vx*hf+s.vz*hz;
+    let vLat=s.vx*rf+s.vz*rz;
+    const latKeep=s.state===STATE.TURNING?0.55:(s.state===STATE.HOLDING?0.2:0.12);
+    vLat*=Math.exp(-LOCO.latDampen*(1-latKeep)*dt);
+    let vF=vFwd; if(vF<0) vF*=Math.exp(-7*dt);
+    s.vx=hf*vF+rf*vLat; s.vz=hz*vF+rz*vLat;
+  }
+  const sp2=Math.hypot(s.vx,s.vz);
+  if(sp2>LOCO.forwardRun*1.05){ const k=LOCO.forwardRun*1.05/sp2; s.vx*=k; s.vz*=k; }
+  if(sp2<LOCO.stopSpeed && intentSpeed<0.02){ s.vx=0; s.vz=0; }
+  s.speed=Math.hypot(s.vx,s.vz);
+  s.x+=s.vx*dt; s.z+=s.vz*dt;
+  s.phase+=dt*(4.2+s.speed*2.4);
+}
+
+function step(dt){
+  time+=dt; orderClock+=dt;
+  // 1) Centurion decides & publishes command packet
+  updateCenturion(dt);
+  const {fwd,right}=facingVectors();
+  const frame=frameStats(fwd,right);
+
+  rebuildSpatialGrid(2.2);
+
+  for(const s of soldiers){
+    if(s.dead) continue;
+    const desire = s.isLeader ? computeCenturionDesire(s, dt) : computePrivateDesire(s, fwd, right, frame, dt);
+    updateFSM(s, desire, dt);
+    applyHeadedLocomotion(s, desire, dt);
+  }
+  resolveHardCollisions();
+  for(const s of soldiers){
+    if(s.dead) continue;
+    const sp=Math.hypot(s.vx,s.vz);
+    if(sp>LOCO.forwardRun*1.08){ const k=LOCO.forwardRun*1.05/sp; s.vx*=k; s.vz*=k; }
+    s.speed=Math.hypot(s.vx,s.vz);
+  }
+}
+
+function computeMetrics(){
+  const {fwd,right}=facingVectors();
+  const frame=frameStats(fwd,right);
+  let sp=0, nHold=0,nTurn=0,nForm=0,nAdj=0,nMill=0,nEvade=0, anch=0, faceN=0, alive=0;
+  const lats=[], deps=[];
+  const faceA=LOCO.faceAlignDeg*Math.PI/180*1.6;
+  for(const s of soldiers){
+    if(s.dead) continue;
+    alive++; sp+=s.speed; anch+=s.slotDist||0; lats.push(s.lat); deps.push(s.dep);
+    if(Math.abs(angleDiff(CMD.facing,s.heading))<faceA) faceN++;
+    if(s.state===STATE.HOLDING) nHold++; else if(s.state===STATE.TURNING) nTurn++;
+    else if(s.state===STATE.FORMING_UP) nForm++; else if(s.state===STATE.ADJUSTING) nAdj++;
+    else if(s.state===STATE.MILLING) nMill++; else if(s.state===STATE.EVADING) nEvade++;
+  }
+  alive=Math.max(1,alive);
+  const sortedL=lats.slice().sort((a,b)=>a-b);
+  let good=0,total=0;
+  for(let i=0;i<sortedL.length-1;i++){
+    const g=sortedL[i+1]-sortedL[i];
+    if(g<cfg.spacing*3.2){ total++; if(g>cfg.spacing*.7&&g<cfg.spacing*1.45) good++; }
+  }
+  const menN=livingMen();
+  const rallyN=countNearAnchor(cfg.rallyRadius);
+  metrics={
+    depthSpan:frame.depthSpan, frontage:frame.frontage,
+    aspect:frame.depthSpan>0.05?frame.frontage/frame.depthSpan:99,
+    spacingQuality:total?good/total:0, avgSpeed:sp/alive,
+    avgAnch:anch/alive,
+    cx:frame.cx, cz:frame.cz, minLat:frame.minLat, maxLat:frame.maxLat, minDep:frame.minDep, maxDep:frame.maxDep,
+    nHold,nTurn,nForm,nAdj,nMill,nEvade,
+    rallyFrac:rallyN/menN, faceFrac:faceN/alive,
+    tPlant: plantClock>=0 ? plantClock.toFixed(1)+'s' : '—',
+    centFsm: centurion ? (centurion.dead?'DEAD':centurion.coState) : '—',
+    settled: nHold/alive,
+    overlaps:metrics.overlaps||0
+  };
+}
+
+// ——— Drawing (from v12, simplified) ———
+function updateCamera(){
+  const cp=Math.cos(camera.pitch), sp=Math.sin(camera.pitch);
+  camera.eye.x=camera.target.x+Math.sin(camera.yaw)*cp*camera.dist;
+  camera.eye.z=camera.target.z+Math.cos(camera.yaw)*cp*camera.dist;
+  camera.eye.y=camera.target.y+sp*camera.dist;
+  camera.fwd=norm(sub(camera.target, camera.eye));
+  camera.right=norm(cross(camera.fwd,{x:0,y:1,z:0}));
+  camera.up=norm(cross(camera.right, camera.fwd));
+  camera.f=Math.min(innerWidth,innerHeight)*0.95;
+}
+function project(p){
+  const q=sub(p,camera.eye); const zc=dot(q,camera.fwd); if(zc<0.25) return null;
+  const scale=camera.f/zc;
+  return {x:innerWidth*.5+dot(q,camera.right)*scale, y:innerHeight*.51-dot(q,camera.up)*scale, z:zc, s:scale};
+}
+function dot(a,b){ return a.x*b.x+a.y*b.y+a.z*b.z; }
+function screenToGround(sx,sy){
+  updateCamera();
+  const ndcX=(sx-innerWidth*.5)/camera.f, ndcY=(innerHeight*.51-sy)/camera.f;
+  const dir=norm({x:camera.fwd.x+camera.right.x*ndcX+camera.up.x*ndcY, y:camera.fwd.y+camera.right.y*ndcX+camera.up.y*ndcY, z:camera.fwd.z+camera.right.z*ndcX+camera.up.z*ndcY});
+  if(Math.abs(dir.y)<1e-6) return null; const t=-camera.eye.y/dir.y; if(t<=0) return null;
+  return {x:camera.eye.x+dir.x*t, z:camera.eye.z+dir.z*t};
+}
+function panOnGround(dx,dy){
+  const scale=camera.dist*0.0022;
+  const f=norm({x:camera.fwd.x,y:0,z:camera.fwd.z}), r=norm({x:camera.right.x,y:0,z:camera.right.z});
+  camera.target.x=clamp(camera.target.x-(r.x*dx+f.x*dy)*scale,-90,90);
+  camera.target.z=clamp(camera.target.z-(r.z*dx+f.z*dy)*scale,-90,90);
+}
+function resetCamera(){
+  camera.target.x=0; camera.target.y=0; camera.target.z=0;
+  camera.yaw=CAM0.yaw; camera.pitch=CAM0.pitch; camera.dist=CAM0.dist;
+  cfg.followCenter=false; document.getElementById('followCenter').classList.remove('active');
+  document.getElementById('camMode').textContent='reset';
+}
+function strokeSeg(a,b,color,w,alpha=1){
+  const pa=project(a), pb=project(b); if(!pa||!pb) return;
+  ctx.save(); ctx.globalAlpha=alpha; ctx.strokeStyle=color; ctx.lineWidth=Math.max(.6,((pa.s+pb.s)*.5)*w); ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y); ctx.stroke(); ctx.restore();
+}
+function fillPoly(pts,color,alpha=1){
+  const ps=pts.map(project); if(ps.some(p=>!p)) return;
+  ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle=color; ctx.beginPath(); ctx.moveTo(ps[0].x,ps[0].y);
+  for(let i=1;i<ps.length;i++) ctx.lineTo(ps[i].x,ps[i].y); ctx.closePath(); ctx.fill(); ctx.restore();
+}
+function strokePoly(pts,color,w=1,alpha=1){
+  const ps=pts.map(project); if(ps.some(p=>!p)) return;
+  ctx.save(); ctx.globalAlpha=alpha; ctx.strokeStyle=color; ctx.lineWidth=w; ctx.beginPath(); ctx.moveTo(ps[0].x,ps[0].y);
+  for(let i=1;i<ps.length;i++) ctx.lineTo(ps[i].x,ps[i].y); ctx.closePath(); ctx.stroke(); ctx.restore();
+}
+function circle3(p,r,color,alpha=1,stroke=null){
+  const pp=project(p); if(!pp) return;
+  ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle=color; ctx.beginPath(); ctx.arc(pp.x,pp.y,Math.max(.8,r*pp.s),0,Math.PI*2); ctx.fill();
+  if(stroke){ ctx.strokeStyle=stroke; ctx.lineWidth=1; ctx.stroke(); } ctx.restore();
+}
+function world(x,y,z){ return {x,y,z}; }
+function localPoint(s,right,fwd,rx,y,fz){ return {x:s.x+right.x*rx+fwd.x*fz, y, z:s.z+right.z*rx+fwd.z*fz}; }
+function drawSoldier(s){
+  if(s.dead){
+    // Fallen marker
+    drawDisc(s.x,s.z, bodyR()*1.1, 'rgba(80,40,40,.55)', .9, 16);
+    circle3(world(s.x,0.15,s.z), 0.35, '#4a2020', .85);
+    return;
+  }
+  const fwd={x:Math.sin(s.heading), z:Math.cos(s.heading)};
+  const right={x:Math.cos(s.heading), z:-Math.sin(s.heading)};
+  const walk=clamp(s.speed/LOCO.forwardRun,0,1), swing=Math.sin(s.phase)*.25*walk, arm=-Math.sin(s.phase)*.2*walk;
+  const leader=s.isLeader, armor=leader?'#d7b255':'#979b9d', tunic=leader?'#a23227':'#8e2420', skin='#c8916c', leather='#4e3524', shield='#a82026', spear='#7a583a';
+
+  strokeSeg(localPoint(s,right,fwd,-.17,.92,0), localPoint(s,right,fwd,-.17,.48,.05+swing*.55), leather,.15);
+  strokeSeg(localPoint(s,right,fwd,-.17,.48,.05+swing*.55), localPoint(s,right,fwd,-.16,.06,.08+swing), leather,.13);
+  strokeSeg(localPoint(s,right,fwd,.17,.92,0), localPoint(s,right,fwd,.17,.48,.05-swing*.55), leather,.15);
+  strokeSeg(localPoint(s,right,fwd,.17,.48,.05-swing*.55), localPoint(s,right,fwd,.16,.06,.08-swing), leather,.13);
+  strokeSeg(localPoint(s,right,fwd,-.24,.88,.02), localPoint(s,right,fwd,.24,.88,.02), tunic,.34,.95);
+  const shL=localPoint(s,right,fwd,-.38,1.55,.04), shR=localPoint(s,right,fwd,.38,1.55,.04);
+  const wL=localPoint(s,right,fwd,-.28,.94,.02), wR=localPoint(s,right,fwd,.28,.94,.02);
+  fillPoly([shL,shR,wR,wL], armor,.96); strokePoly([shL,shR,wR,wL], 'rgba(0,0,0,.35)',1,.6);
+  strokeSeg(shL, localPoint(s,right,fwd,-.47,.95,.22+arm), skin,.13);
+  strokeSeg(shR, localPoint(s,right,fwd,.48,1.0,.18-arm), skin,.12);
+  const sc=localPoint(s,right,fwd,-.52,1.05,.38);
+  const shieldPts=[
+    {x:sc.x+right.x*(-.08)+fwd.x*(-.02), y:1.48, z:sc.z+right.z*(-.08)+fwd.z*(-.02)},
+    {x:sc.x+right.x*(-.08)+fwd.x*(-.02), y:.64, z:sc.z+right.z*(-.08)+fwd.z*(-.02)},
+    {x:sc.x+right.x*.40+fwd.x*.06, y:.60, z:sc.z+right.z*.40+fwd.z*.06},
+    {x:sc.x+right.x*.40+fwd.x*.06, y:1.44, z:sc.z+right.z*.40+fwd.z*.06}
+  ];
+  fillPoly(shieldPts,shield,.95); strokePoly(shieldPts,'#e9bf62',1.4,.75);
+  const spearBase=localPoint(s,right,fwd,.44,.98,.12-arm);
+  const spearTip=localPoint(s,right,fwd,.44,1.28,1.72-arm);
+  strokeSeg(spearBase, spearTip, spear,.06,.95);
+  strokeSeg(spearTip, localPoint(s,right,fwd,.44,1.32,1.90-arm), '#c9c9c9', .13,.95);
+  strokeSeg(world(s.x,1,s.z), world(s.x+fwd.x*.04,1.63,s.z+fwd.z*.04), armor,.38,.98);
+  const head=world(s.x+fwd.x*.06, 1.92, s.z+fwd.z*.06);
+  circle3(head,.23,skin,1,'rgba(0,0,0,.25)');
+  circle3(world(s.x+fwd.x*.06, 2.04, s.z+fwd.z*.06), .24, armor, .95);
+  strokeSeg(localPoint(s,right,fwd,-.04,2.14,.04), localPoint(s,right,fwd,.04,leader?2.52:2.34,.08), leader?'#e9bf62':tunic, leader?.19:.12,.98);
+  if(leader){
+    // Signum / vexillum — the visible order marker
+    strokeSeg(localPoint(s,right,fwd,.62,.1,.08), localPoint(s,right,fwd,.62,2.55,.08), '#8b6a45', .05, .9);
+    fillPoly([
+      localPoint(s,right,fwd,.62,2.55,.08),
+      localPoint(s,right,fwd,1.20,2.42,.08),
+      localPoint(s,right,fwd,1.20,2.02,.08),
+      localPoint(s,right,fwd,.62,2.15,.08)
+    ], '#e9bf62', .95);
+  }
+}
+function drawDisc(x,z,r,color,alpha=.8,seg=28){
+  const pts=[]; for(let i=0;i<seg;i++){ const a=i/seg*Math.PI*2; pts.push(world(x+Math.cos(a)*r,.015,z+Math.sin(a)*r)); }
+  fillPoly(pts,color,alpha);
+}
+function drawCuboid(o){
+  const sx=o.sx||4, sz=o.sz||4, h=2.3, rot=o.rot||0, c=Math.cos(rot), s=Math.sin(rot);
+  const corners=[]; for(const yy of [0,h]) for(const [lx,lz] of [[-sx/2,-sz/2],[sx/2,-sz/2],[sx/2,sz/2],[-sx/2,sz/2]])
+    corners.push(world(o.x+lx*c-lz*s, yy, o.z+lx*s+lz*c));
+  const faces=[[0,1,2,3,'#6b6356'],[4,7,6,5,'#807769'],[0,4,5,1,'#5a5349'],[1,5,6,2,'#645c50'],[2,6,7,3,'#4e493f'],[3,7,4,0,'#70675b']];
+  faces.map(f=>({f, depth:f.slice(0,4).reduce((a,i)=>a+(project(corners[i])?.z||0),0)/4})).sort((a,b)=>b.depth-a.depth)
+    .forEach(it=>fillPoly(it.f.slice(0,4).map(i=>corners[i]), it.f[4], .98));
+}
+function drawGrid(){
+  ctx.fillStyle='#111318'; ctx.fillRect(0,0,innerWidth,innerHeight);
+  const g=ctx.createLinearGradient(0,0,0,innerHeight); g.addColorStop(0,'#151922'); g.addColorStop(.55,'#222b24'); g.addColorStop(1,'#181a17');
+  ctx.fillStyle=g; ctx.fillRect(0,0,innerWidth,innerHeight);
+  for(let v=-65;v<=65;v+=5){
+    strokeSeg(world(-65,0,v),world(65,0,v),v===0?'rgba(245,238,218,.22)':'rgba(245,238,218,.10)',.03,v===0?.55:.38);
+    strokeSeg(world(v,0,-65),world(v,0,65),v===0?'rgba(245,238,218,.22)':'rgba(245,238,218,.10)',.03,v===0?.55:.38);
+  }
+}
+function drawTerrain(){
+  for(const o of obstacles){
+    if(o.kind==='hill'){ drawDisc(o.x,o.z,o.r,'#596545',.82,40); drawDisc(o.x,o.z,o.r*.58,'#6b754c',.62,32); }
+    else if(o.kind==='rock'){ drawDisc(o.x,o.z,o.r,'#4c4b46',.8,18); circle3(world(o.x,.55,o.z),o.r*.34,'#68655d',.95); }
+    else drawCuboid(o);
+  }
+}
+function drawStateDiscs(){ if(!cfg.showStates) return; for(const s of soldiers){ if(s.dead) continue; drawDisc(s.x,s.z,bodyR()*1.05, STATE_COLOR[s.state]||'rgba(255,255,255,.2)', .9, 18); } }
+function drawBodyDiscs(){ if(!cfg.showBodies) return; for(const s of soldiers){ if(s.dead) continue; drawDisc(s.x,s.z,bodyR(), s.isLeader?'rgba(233,191,98,.22)':'rgba(143,208,255,.16)', .85, 20); } }
+function drawCommand(){
+  if(!cfg.showCmd) return;
+  // Anchor disc + facing arrow + rally ring
+  const col = CMD.live ? 'rgba(233,191,98,.55)' : 'rgba(255,120,120,.4)';
+  drawDisc(CMD.anchorX, CMD.anchorZ, 0.55, col, 0.85, 20);
+  drawDisc(CMD.anchorX, CMD.anchorZ, cfg.rallyRadius, 'rgba(233,191,98,.08)', 0.55, 48);
+  const {fwd}=facingVectors();
+  strokeSeg(world(CMD.anchorX,.2,CMD.anchorZ), world(CMD.anchorX+fwd.x*3.2, 1.6, CMD.anchorZ+fwd.z*3.2), '#e9bf62', .08, .75);
+  // Lines from men to anchor when forming/rally (subtle)
+  if(CMD.order==='rally' || CMD.order==='form_line' || CMD.order==='form_block'){
+    for(const s of soldiers){
+      if(s.dead||s.isLeader) continue;
+      if((s.slotDist||0) > cfg.rallyRadius*1.1){
+        strokeSeg(world(s.x,.1,s.z), world(CMD.anchorX,.1,CMD.anchorZ), 'rgba(143,208,255,.12)', .015, 0.35);
+      }
+    }
+  }
+}
+function drawLinks(){
+  if(!cfg.links) return; const {fwd}=facingVectors(); const maxL=soldiers.length>130?2:3;
+  const linkR=cfg.spacing*2.2;
+  rebuildSpatialGrid(Math.max(cfg.spacing, 2.2));
+  for(let i=0;i<soldiers.length;i++){
+    const a=soldiers[i]; if(a.dead) continue;
+    const near=[]; let drawn=0;
+    const nn=queryNearbyAgentsInto(a.x, a.z, linkR, _nearScratch);
+    for(let k=0;k<nn;k++){
+      const b=_nearScratch[k];
+      if(b.dead||b.id<=a.id) continue;
+      const d=dist2(a.x,a.z,b.x,b.z);
+      if(d<linkR) near.push({b,d,dep:Math.abs((b.x-a.x)*fwd.x+(b.z-a.z)*fwd.z)});
+    }
+    near.sort((u,v)=>u.d-v.d);
+    for(const n of near){ if(drawn>=maxL) break; strokeSeg(world(a.x,.12,a.z), world(n.b.x,.12,n.b.z), n.dep<cfg.depthBand?'#8fd0ff':'#fff', .025, n.dep<cfg.depthBand?.36:.12); drawn++; }
+  }
+}
+function drawAnalysis(){
+  if(!cfg.analysisLine||soldiers.length<2) return;
+  const {fwd,right}=facingVectors();
+  const corners=[[metrics.minLat,metrics.minDep],[metrics.maxLat,metrics.minDep],[metrics.maxLat,metrics.maxDep],[metrics.minLat,metrics.maxDep]]
+    .map(([la,de])=>world(CMD.anchorX+right.x*la+fwd.x*de, .08, CMD.anchorZ+right.z*la+fwd.z*de));
+  for(let i=0;i<4;i++) strokeSeg(corners[i], corners[(i+1)%4], '#8fd0ff', .04, .45);
+}
+function render(){
+  updateCamera(); drawGrid(); drawTerrain(); drawCommand(); drawStateDiscs(); drawBodyDiscs(); drawAnalysis(); drawLinks();
+  soldiers.map(s=>({s,p:project(world(s.x,0,s.z))})).filter(o=>o.p).sort((a,b)=>b.p.z-a.p.z).forEach(o=>drawSoldier(o.s));
+}
+function updateHud(){
+  document.getElementById('depthSpan').textContent=metrics.depthSpan.toFixed(1)+' m';
+  document.getElementById('frontage').textContent=metrics.frontage.toFixed(1)+' m';
+  document.getElementById('spacingQuality').textContent=Math.round(metrics.spacingQuality*100)+'%';
+  document.getElementById('avgSpeed').textContent=metrics.avgSpeed.toFixed(2)+' m/s';
+  document.getElementById('settled').textContent=Math.round(metrics.settled*100)+'%';
+  document.getElementById('rallyFrac').textContent=Math.round(metrics.rallyFrac*100)+'%';
+  document.getElementById('faceFrac').textContent=Math.round(metrics.faceFrac*100)+'%';
+  document.getElementById('anchDist').textContent=metrics.avgAnch.toFixed(1)+' m';
+  document.getElementById('tPlant').textContent=metrics.tPlant;
+  document.getElementById('centFsm').textContent=metrics.centFsm;
+  document.getElementById('cmdOrder').textContent=CMD.order+(CMD.live?'':' (no CO)');
+  document.getElementById('nHold').textContent=metrics.nHold;
+  document.getElementById('nTurn').textContent=metrics.nTurn;
+  document.getElementById('nForm').textContent=metrics.nForm;
+  document.getElementById('nAdj').textContent=metrics.nAdj;
+  document.getElementById('nMill').textContent=metrics.nMill;
+  document.getElementById('nEvade').textContent=metrics.nEvade;
+  let status=cfg.paused?'paused':CMD.order;
+  if(!cfg.paused){
+    if(centurion&&centurion.dead) status='leaderless';
+    else if(metrics.centFsm==='call_rally') status='rallying';
+    else if(metrics.centFsm==='call_form') status='forming';
+    else if(metrics.centFsm==='hold') status='holding';
+    else if(metrics.centFsm==='move_to_post'||metrics.centFsm==='plant') status='CO planting';
+    else if(metrics.centFsm==='assess') status='CO assessing';
+  }
+  document.getElementById('status').textContent=status;
+}
+
+// UI
+let dragMode=null, lastX=0, lastY=0, lastTap=0;
+function setCursor(){ canvas.classList.toggle('orbiting', dragMode==='orbit'); canvas.classList.toggle('panning', dragMode==='pan'); }
+canvas.addEventListener('contextmenu', e=>e.preventDefault());
+canvas.addEventListener('pointerdown', e=>{
+  const pan=e.button===1||e.button===2||(e.button===0&&e.shiftKey);
+  dragMode=pan?'pan':(e.button===0?'orbit':null); if(!dragMode) return;
+  lastX=e.clientX; lastY=e.clientY; canvas.setPointerCapture(e.pointerId); setCursor();
+  document.getElementById('camMode').textContent=dragMode;
+  if(e.button===0&&!e.shiftKey){ const now=performance.now(); if(now-lastTap<320) resetCamera(); lastTap=now; }
+});
+canvas.addEventListener('pointermove', e=>{
+  if(!dragMode) return; const dx=e.clientX-lastX, dy=e.clientY-lastY; lastX=e.clientX; lastY=e.clientY;
+  if(dragMode==='orbit'){ camera.yaw-=dx*.006; camera.pitch=clamp(camera.pitch+dy*.004,.12,1.35); }
+  else { panOnGround(dx,dy); if(cfg.followCenter){ cfg.followCenter=false; document.getElementById('followCenter').classList.remove('active'); } }
+});
+canvas.addEventListener('pointerup', e=>{ dragMode=null; setCursor(); try{canvas.releasePointerCapture(e.pointerId);}catch{} document.getElementById('camMode').textContent=cfg.followCenter?'follow':'idle'; });
+canvas.addEventListener('pointercancel', ()=>{ dragMode=null; setCursor(); });
+canvas.addEventListener('wheel', e=>{
+  e.preventDefault();
+  const before=screenToGround(e.clientX,e.clientY);
+  camera.dist=clamp(camera.dist*Math.exp(e.deltaY*.0011),12,140);
+  const after=screenToGround(e.clientX,e.clientY);
+  if(before&&after){ camera.target.x+=before.x-after.x; camera.target.z+=before.z-after.z; }
+  document.getElementById('camMode').textContent='zoom';
+}, {passive:false});
+
+function bindRange(id,key,out,fmt=v=>Number(v).toFixed(2)){
+  const el=document.getElementById(id), oo=document.getElementById(out);
+  const f=()=>{
+    if(key==='rallyRadius'){ cfg.rallyRadius=Number(el.value); oo.textContent=fmt(el.value); return; }
+    cfg[key]=Number(el.value); oo.textContent=fmt(el.value);
+    if(key==='spacing'){ cfg.personalSpace=Math.max(1.05, cfg.spacing*.87); CMD.spacing=cfg.spacing; }
+    if(key==='bodyRadius'){ const minS=cfg.bodyRadius*2+.15; if(cfg.spacing<minS){ cfg.spacing=minS; document.getElementById('spacing').value=cfg.spacing.toFixed(2); document.getElementById('spacingOut').textContent=Number(cfg.spacing).toFixed(2); cfg.personalSpace=Math.max(1.05,cfg.spacing*.87);} }
+  };
+  el.addEventListener('input',f); f();
+}
+bindRange('spacing','spacing','spacingOut');
+bindRange('bodyRadius','bodyRadius','bodyOut');
+bindRange('linePressure','linePressure','lineOut', v=>Number(v).toFixed(1));
+bindRange('separation','separation','sepOut', v=>Number(v).toFixed(1));
+bindRange('cohesion','cohesion','cohOut');
+bindRange('neighborRadius','neighborRadius','senseOut', v=>Number(v).toFixed(0));
+bindRange('rallyR','rallyRadius','rallyOut', v=>Number(v).toFixed(0));
+bindRange('timeScale','timeScale','timeOut', v=>Number(v).toFixed(1)+'×');
+
+document.getElementById('links').onchange=e=>cfg.links=e.target.checked;
+document.getElementById('analysisLine').onchange=e=>cfg.analysisLine=e.target.checked;
+document.getElementById('showBodies').onchange=e=>cfg.showBodies=e.target.checked;
+document.getElementById('showStates').onchange=e=>cfg.showStates=e.target.checked;
+document.getElementById('showCmd').onchange=e=>cfg.showCmd=e.target.checked;
+document.getElementById('autoPlant').onchange=e=>cfg.autoPlant=e.target.checked;
+document.getElementById('pause').onclick=()=>{ cfg.paused=!cfg.paused; document.getElementById('pause').textContent=cfg.paused?'Resume':'Pause'; };
+document.getElementById('scatter').onclick=()=>scatter();
+document.getElementById('formLine').onclick=()=>setFormation('line');
+document.getElementById('formBlock').onclick=()=>setFormation('block');
+document.getElementById('formLoose').onclick=()=>setFormation('loose');
+document.getElementById('orderRally').onclick=()=>issuePlayerOrder('rally');
+document.getElementById('orderForm').onclick=()=>issuePlayerOrder(cfg.command==='block'?'form_block':'form_line');
+document.getElementById('turnLeft').onclick=()=>rotateFacing(-Math.PI/12);
+document.getElementById('turnRight').onclick=()=>rotateFacing(Math.PI/12);
+document.getElementById('killCent').onclick=()=>killCenturion();
+document.getElementById('reviveCent').onclick=()=>reviveCenturion();
+document.getElementById('resetCam').onclick=()=>resetCamera();
+document.getElementById('followCenter').onclick=()=>{ cfg.followCenter=!cfg.followCenter; document.getElementById('followCenter').classList.toggle('active',cfg.followCenter); document.getElementById('camMode').textContent=cfg.followCenter?'follow':'idle'; };
+document.getElementById('count').oninput=e=>document.getElementById('countOut').textContent=e.target.value;
+document.getElementById('count').onchange=()=>rebuildSoldiers();
+
+function typing(el){ return el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.isContentEditable); }
+addEventListener('keydown', e=>{
+  if(typing(e.target)) return;
+  keys[e.key.toLowerCase()]=true; if(e.code.startsWith('Arrow')) keys[e.code]=true;
+  if(e.key===' '){ e.preventDefault(); document.getElementById('pause').click(); }
+  const k=e.key.toLowerCase();
+  if(k==='r') scatter();
+  if(k==='1') setFormation('line');
+  if(k==='2') setFormation('block');
+  if(k==='m') setFormation('loose');
+  if(k==='g') issuePlayerOrder('rally');
+  if(k==='f') issuePlayerOrder(cfg.command==='block'?'form_block':'form_line');
+  if(k==='k') killCenturion();
+  if(k==='v') reviveCenturion();
+  if(k==='q') rotateFacing(-Math.PI/12); if(k==='e') rotateFacing(Math.PI/12);
+  if(k==='h'||e.key==='Home') resetCamera(); if(k==='c') document.getElementById('followCenter').click();
+  if(k==='='||k==='+') camera.dist=clamp(camera.dist*.92,12,140); if(k==='-'||k==='_') camera.dist=clamp(camera.dist*1.08,12,140);
+});
+addEventListener('keyup', e=>{ keys[e.key.toLowerCase()]=false; if(e.code.startsWith('Arrow')) keys[e.code]=false; });
+addEventListener('blur', ()=>{ for(const k of Object.keys(keys)) keys[k]=false; });
+
+function updateCameraControls(dt){
+  updateCamera();
+  const f=norm({x:camera.fwd.x,y:0,z:camera.fwd.z}), r=norm({x:camera.right.x,y:0,z:camera.right.z});
+  const speed=camera.dist*.85; let mx=0,mz=0;
+  if(keys['w']||keys['ArrowUp']){ mx+=f.x; mz+=f.z; } if(keys['s']||keys['ArrowDown']){ mx-=f.x; mz-=f.z; }
+  if(keys['a']||keys['ArrowLeft']){ mx-=r.x; mz-=r.z; } if(keys['d']||keys['ArrowRight']){ mx+=r.x; mz+=r.z; }
+  const m=Math.hypot(mx,mz); if(m>0){ mx/=m; mz/=m; camera.target.x=clamp(camera.target.x+mx*speed*dt,-90,90); camera.target.z=clamp(camera.target.z+mz*speed*dt,-90,90);
+    if(cfg.followCenter){ cfg.followCenter=false; document.getElementById('followCenter').classList.remove('active'); } }
+  if(cfg.followCenter&&soldiers.length){ const k=1-Math.exp(-4.5*dt); camera.target.x+=(metrics.cx-camera.target.x)*k; camera.target.z+=(metrics.cz-camera.target.z)*k; }
+}
+
+rebuildSoldiers();
+// Start with an ordered form request so first load shows the pipeline
+issuePlayerOrder('form_line');
+computeMetrics();
+let last=performance.now();
+function loop(now){
+  requestAnimationFrame(loop);
+  const dt=Math.min(.05,(now-last)/1000); last=now;
+  updateCameraControls(dt);
+  if(!cfg.paused) step(dt*cfg.timeScale);
+  computeMetrics(); render(); updateHud();
+}
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
