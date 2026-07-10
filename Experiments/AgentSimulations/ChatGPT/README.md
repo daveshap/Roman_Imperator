@@ -4,8 +4,18 @@ Single-file HTML prototypes (and a few supporting scripts) exploring **Roman-sty
 
 **How to run:** open any `.html` file in a browser (Chrome/Edge/Firefox). No server required unless a file loads external assets.
 
-**Solid packing checkpoint (v07):** [`soldier_ABM_v07.html`](./soldier_ABM_v07.html) — frozen.  
-**Current tip (v08 traffic):** [`soldier_ABM_v08.html`](./soldier_ABM_v08.html) — v07 packing + sailor pass (right peel, pass-window lateral, plant holds / movers slide).
+### Status (session closed)
+
+| Build | File | Notes |
+|-------|------|--------|
+| **Best packing freeze** | [`soldier_ABM_v07.html`](./soldier_ABM_v07.html) | Form-up / face / thrash fixes — **do not edit** |
+| **Saved tip (traffic attempt)** | [`soldier_ABM_v08.html`](./soldier_ABM_v08.html) | v07 + sailor pass layers only; sticky-detour pathing **rolled back** (made muster flee) |
+
+**Hard constraint (project law):** no omniscient formation controller, no global seat auction, no painted-floor truth owned by the sim. Agents may share **doctrine** (shape / spacing / facing / site idea) and hold **private** seat beliefs from **local** perception.
+
+**Architectural failure in this lineage (v00–v08):** despite claiming “private mental lattice,” the engine builds a **single globally indexed seat map** (`_lat`: `si = rank * cols + file`, shared `wx[]/wz[]` world posts, O(1) world↔index). Every man scores the same absolute grid. That is a **global formation map with private indices**, not a local/relational form-up. External review called this correctly. **This line did not abide by the hard constraint.** Treat v04–v07 as useful *behavior* research only; a correct re-foundation must drop the god lattice.
+
+Traffic/oscillation work on v08 is therefore **side-quest on a flawed base**. Saved for reference, not a path forward.
 
 ---
 
@@ -22,13 +32,13 @@ Versioning: `soldier_ABM_vNN.html` with **NN = 00, 01, 02, …**
 | `soldier_ABM_v01.html` | Local “don’t all mob one seat” + spatial queries |
 | `soldier_ABM_v02.html` | Scale: O(1) seats, candidate rings, dress fast-path |
 | `soldier_ABM_v03.html` | Near-rank picks (not far exile) + collision slide |
-| `soldier_ABM_v04.html` | **Great baseline** — occupancy perception; cascade free nearest; plant/micro-center |
+| `soldier_ABM_v04.html` | **Great baseline (behavior)** — occupancy perception; cascade free nearest; plant/micro-center |
 | `soldier_ABM_v05.html` | Face orders + aggressive twirl gates — **form-up regressed; skip** |
 | `soldier_ABM_v06.html` | Pure v04 packing + FACE L/R / ABOUT only (`formFacing` vs `unitFacing`) |
-| `soldier_ABM_v07.html` | **Solid packing checkpoint** — seat-heading / FOV / stuck-wing / sticky / plant protect |
-| `soldier_ABM_v08.html` | **tip** — v07 + pass-through traffic (shared right, pass-window slip, tang. peel) |
+| `soldier_ABM_v07.html` | **Packing freeze** — seat-heading / FOV / stuck-wing / sticky / plant protect |
+| `soldier_ABM_v08.html` | **Saved** — v07 + pass-window traffic; no sticky detour; **still global lattice** |
 
-**Deep design notes:** [v04 core](#soldier_abm-form-up-lab-v04--what-works-and-why) · [learnings since v04 → v07](#learnings-since-v04--v07-checkpoint)
+**Deep design notes:** [v04 core](#soldier_abm-form-up-lab-v04--what-works-and-why) · [learnings since v04 → v07](#learnings-since-v04--v07-checkpoint) · [constraint breach + handoff](#constraint-breach--handoff-end-of-line)
 
 ### Self-assembling form-up series (legacy main line)
 
@@ -80,15 +90,17 @@ Captured after v04: form-up is **~99% there** — men take a post, stay on it, a
 
 | Allowed | Forbidden |
 |---------|-----------|
-| Shared **doctrine**: shape (triple/rect/square), spacing, facing, form-on **(0,0)** | Omniscient **formation controller** that assigns each man a world seat |
-| Each man’s **private** belief: “that’s my spot” | Global claim auction / Hungarian / sim-owned free-seat table |
+| Shared **doctrine**: shape (triple/rect/square), spacing, facing, form-on **site idea** | Omniscient **formation controller** that assigns each man a world seat |
+| Each man’s **private** belief: “that’s my spot” | Global claim auction / Hungarian / **sim-owned free-seat table or absolute seat index map** |
 | Occupancy from **what he can see** (bodies, distance to seat centers) | Telepathic “everyone knows who owns file 5” |
 | Local cascade: 1st free nearest → 2nd → … | Far-field exile (“go to the opposite end of the map”) |
 
 Mental model ≠ painted floor owned by the engine.  
 Mental model = **shared idea of the order** + **private seat hypothesis** + **local perception of who is already using a post**.
 
-There is **no centurion** in this lab. Anchor is geometric origin `(0,0)`. Century size capped at **300** (RTW-scale unit, not 6k stress).
+> **Compliance note:** v00–v08 **broke this.** They ship a sim-global lattice (`_lat`, `si`, `wx[]/wz[]`). Private `beliefSi` only picks a cell on that god map. See [constraint breach](#constraint-breach--handoff-end-of-line). Behavior notes below remain useful; the substrate does not satisfy the claim.
+
+There is **no centurion** in this lab. Anchor in these files is geometric origin `(0,0)`. Century size capped at **300** (RTW-scale unit, not 6k stress).
 
 ### Shapes only
 
@@ -312,13 +324,63 @@ v07 is **working**, not perfect:
 
 ### Bottom lines
 
-**v04 packing:**
+**v04 packing (behavior that worked on the wrong substrate):**
 
 > Don’t invent the formation from flocking. Give doctrine (shape + spacing + site). Private seat belief + closer-wins occupancy + cascade nearest free. Muster → form → dress plant.
 
-**v07 checkpoint:**
+**v07 checkpoint (behavior):**
 
-> v04 proved packing can look human. v06 proved face without destroying packing. v07 proved late thrash is mostly bad heading, premature abandon, FOV, and soft plants — **not** a need to redesign the ABM. Keep nearest-free + occupancy; wing only when stuck; never teleport seats on ABOUT FACE.
+> Late thrash was mostly bad heading, premature abandon, FOV, and soft plants. Seat-line travel + plant protect fixed a lot of *symptoms*.
+
+**Honest architecture (override the above if they conflict):**
+
+> A shared, globally indexed seat array is still a god map. Private `beliefSi` does not make it local. Rebuild later from relational / private geometry if the scientific claim matters.
+
+---
+
+## Constraint breach + handoff (end of line)
+
+**Stopped here.** Work is saved; do not continue papering over traffic/pathing on this base as if the map model were correct.
+
+### What was built (and kept)
+
+| Artifact | Keep? | Why |
+|----------|-------|-----|
+| `soldier_ABM_v07.html` | **Yes — freeze** | Best *visual* form-up / face / thrash stack on this line |
+| `soldier_ABM_v08.html` | **Yes — archive tip** | Traffic only: shared-right peel, `passT` lateral window, tang. slip, plant holds. Sticky **detour pathing rolled back** (muster ran off-map). Oscillation / pass jams **not** solved |
+| README learnings v04→v07 | **Yes** | Real locomotion/perception lessons |
+| Global `_lat` / `si` lattice | **No — invalid under project law** | Sim-owned world posts, absolute indices |
+
+### Where the constraint was violated
+
+```
+getLattice() → one sim-wide grid
+  slots[si], wx[si], wz[si]     // absolute world posts
+  every agent: beliefSi ∈ that index space
+  O(1) nearestSeat(x,z) on the same map
+```
+
+Documented “allowed” was: shared **doctrine idea**, private hypothesis, occupancy from **what he can see**.  
+What shipped: **one absolute packing map** + private claim on a cell of that map. That is closer to a soft auction on a painted floor than to human/relational form-up.
+
+### v08 traffic notes (if anyone reuses peel code)
+
+- Pass-window (weaker `vLat` damp while `passT > 0`) — useful idea.  
+- Personal-right peel + side commit — useful idea.  
+- Plant immovable on normal, mover tangential slip — useful idea.  
+- Sticky detour heading — **failed** (muster/goal pollution); do not re-enable as written.  
+- Pendulum/wiggle remains: unicycle + seat-line heading + reactive lateral still fight each other.
+
+### Next project (when resumed elsewhere)
+
+1. **Delete or ignore the god lattice** as the form-up substrate.  
+2. Rebuild posts as **private / relational** (local origin estimate, neighbor L/R/F/B spacing, or particle beliefs that are not a sim-owned index).  
+3. Only then re-attack pass-through traffic and pathing.  
+4. Keep v07 as a **motion/plant reference**, not as the architecture to extend.
+
+### Session end
+
+No further code in this chat. Constraint was hard, documented, and not met. Saved v07 + v08 + this README; terminate.
 
 ---
 
