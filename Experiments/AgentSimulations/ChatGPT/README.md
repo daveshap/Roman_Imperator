@@ -4,8 +4,8 @@ Single-file HTML prototypes (and a few supporting scripts) exploring **Roman-sty
 
 **How to run:** open any `.html` file in a browser (Chrome/Edge/Firefox). No server required unless a file loads external assets.
 
-**Solid checkpoint (v07):** [`soldier_ABM_v07.html`](./soldier_ABM_v07.html)  
-Form-up plants, face-in-place works, late thrash/spin largely solved. **Do not edit v07** — next work = copy → `soldier_ABM_v08.html`.
+**Solid packing checkpoint (v07):** [`soldier_ABM_v07.html`](./soldier_ABM_v07.html) — frozen.  
+**Current tip (v08 traffic):** [`soldier_ABM_v08.html`](./soldier_ABM_v08.html) — v07 packing + sailor pass (right peel, pass-window lateral, plant holds / movers slide).
 
 ---
 
@@ -25,7 +25,8 @@ Versioning: `soldier_ABM_vNN.html` with **NN = 00, 01, 02, …**
 | `soldier_ABM_v04.html` | **Great baseline** — occupancy perception; cascade free nearest; plant/micro-center |
 | `soldier_ABM_v05.html` | Face orders + aggressive twirl gates — **form-up regressed; skip** |
 | `soldier_ABM_v06.html` | Pure v04 packing + FACE L/R / ABOUT only (`formFacing` vs `unitFacing`) |
-| `soldier_ABM_v07.html` | **Solid checkpoint** — v06 + seat-heading / FOV / stuck-wing / sticky commit / plant protect |
+| `soldier_ABM_v07.html` | **Solid packing checkpoint** — seat-heading / FOV / stuck-wing / sticky / plant protect |
+| `soldier_ABM_v08.html` | **tip** — v07 + pass-through traffic (shared right, pass-window slip, tang. peel) |
 
 **Deep design notes:** [v04 core](#soldier_abm-form-up-lab-v04--what-works-and-why) · [learnings since v04 → v07](#learnings-since-v04--v07-checkpoint)
 
