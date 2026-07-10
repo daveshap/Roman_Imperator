@@ -1,0 +1,1449 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>soldier_ABM_v05 — face orders + less twirl</title>
+<style>
+  :root { color-scheme: dark; --bg:#12141a; --panel:rgba(14,16,22,.9); --line:rgba(255,255,255,.12); --text:#f0ebe3; --muted:#a8a296; --gold:#e9bf62; --blue:#8fd0ff; }
+  html, body { margin:0; width:100%; height:100%; overflow:hidden; background:var(--bg); color:var(--text); font:13px/1.35 system-ui, sans-serif; }
+  canvas { display:block; width:100vw; height:100vh; cursor:grab; touch-action:none; }
+  #hud { position:fixed; top:12px; left:12px; width:300px; max-width:calc(100vw - 24px); border:1px solid var(--line); border-radius:12px; background:var(--panel); padding:12px 14px; backdrop-filter:blur(8px); }
+  h1 { margin:0 0 4px; font-size:14px; font-weight:700; }
+  p { margin:0 0 10px; color:var(--muted); font-size:11px; }
+  .row { display:flex; gap:6px; flex-wrap:wrap; margin:6px 0; }
+  button { color:var(--text); background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.16); border-radius:8px; padding:7px 10px; font:inherit; font-size:12px; cursor:pointer; }
+  button:hover { background:rgba(255,255,255,.14); }
+  button.active { border-color:rgba(143,208,255,.6); background:rgba(143,208,255,.14); }
+  button.primary { border-color:rgba(233,191,98,.55); background:rgba(233,191,98,.16); }
+  label { color:var(--muted); font-size:11px; display:flex; align-items:center; gap:6px; }
+  input[type=range] { width:120px; }
+  .stat { margin-top:8px; font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .stat b { color:var(--gold); font-weight:650; }
+  kbd { background:rgba(255,255,255,.1); padding:1px 5px; border-radius:4px; font-size:10px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <h1>soldier_ABM_v05</h1>
+  <p>v04 form-up + <b>FACE L/R / ABOUT FACE</b> (turn in place, no reform) + less near-post twirl.</p>
+  <div class="row">
+    <button id="btnTriple" class="active">TRIPLE</button>
+    <button id="btnRect">RECT</button>
+    <button id="btnSquare">SQUARE</button>
+  </div>
+  <div class="row">
+    <button id="btnFaceLeft" title="Ad scutum, clina">FACE LEFT</button>
+    <button id="btnFaceRight" title="Ad gladium, clina">FACE RIGHT</button>
+    <button id="btnAboutFace" title="Transforma">ABOUT FACE</button>
+  </div>
+  <div class="row">
+    <button id="btnScatter" class="primary">Scatter</button>
+    <button id="btnPause">Pause</button>
+  </div>
+  <div class="row">
+    <label>N <input id="count" type="range" min="12" max="300" step="4" value="36"><span id="countOut">36</span></label>
+  </div>
+  <div class="row">
+    <label>spacing <input id="spacing" type="range" min="1.0" max="2.4" step="0.05" value="1.55"><span id="spOut">1.55</span></label>
+  </div>
+  <div class="row">
+    <label>tempo <input id="tempo" type="range" min="0.25" max="8" step="0.25" value="1"><span id="tempoOut">1×</span></label>
+  </div>
+  <div class="row">
+    <label><input id="showTargets" type="checkbox"> believed spots</label>
+  </div>
+  <div class="stat">
+    shape <b id="shape">triple</b> · face <b id="faceLab">0°</b> · speed <b id="spd">—</b><br>
+    muster <b id="nMuster">—</b> · form <b id="nForm">—</b> · dress <b id="nDress">—</b><br>
+    near post <b id="near">—</b> · holding <b id="hold">—</b> · ms <b id="ms">—</b><br>
+    <span style="opacity:.85">colors: <span style="color:#c48cff">muster</span> · <span style="color:#8fd0ff">form</span> · <span style="color:#5ad4a0">dress</span></span><br>
+    <kbd>1</kbd>–<kbd>3</kbd> shapes · <kbd>Q</kbd>/<kbd>E</kbd> face L/R · <kbd>F</kbd> about · <kbd>R</kbd> scatter · <kbd>Space</kbd> · <kbd>+/−</kbd>
+  </div>
+</div>
+<script>
+(() => {
+'use strict';
+
+// ——— Canvas / camera ———
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha: false });
+const DPR = Math.min(2, devicePixelRatio || 1);
+let W = 1, H = 1;
+function resize() {
+  W = Math.floor(innerWidth * DPR);
+  H = Math.floor(innerHeight * DPR);
+  canvas.width = W; canvas.height = H;
+  canvas.style.width = innerWidth + 'px';
+  canvas.style.height = innerHeight + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+// Orbit camera: eye ABOVE ground looking down at target (not under the plane).
+const cam = {
+  target: { x: 0, y: 0, z: 0 },
+  dist: 48,
+  yaw: -0.65,
+  pitch: 0.62, // elevation angle; ~0 = horizon, ~π/2 = straight down
+  eye: { x: 0, y: 0, z: 0 },
+  fwd: { x: 0, y: 0, z: 1 },
+  right: { x: 1, y: 0, z: 0 },
+  up: { x: 0, y: 1, z: 0 },
+  f: 900
+};
+function vsub(a, b) { return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z }; }
+function vdot(a, b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+function vcross(a, b) {
+  return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x };
+}
+function vnorm(v) {
+  const m = Math.hypot(v.x, v.y, v.z) || 1;
+  return { x: v.x / m, y: v.y / m, z: v.z / m };
+}
+function updateCamera() {
+  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  // Eye sits above the field and looks at target on the ground plane.
+  cam.eye.x = cam.target.x + Math.sin(cam.yaw) * cp * cam.dist;
+  cam.eye.z = cam.target.z + Math.cos(cam.yaw) * cp * cam.dist;
+  cam.eye.y = cam.target.y + sp * cam.dist;
+  cam.fwd = vnorm(vsub(cam.target, cam.eye));
+  cam.right = vnorm(vcross(cam.fwd, { x: 0, y: 1, z: 0 }));
+  cam.up = vnorm(vcross(cam.right, cam.fwd));
+  cam.f = Math.min(innerWidth, innerHeight) * 0.95;
+}
+// Call updateCamera() once per frame before draw — not per project().
+function project(x, y, z) {
+  const q = { x: x - cam.eye.x, y: y - cam.eye.y, z: z - cam.eye.z };
+  const zc = vdot(q, cam.fwd);
+  if (zc < 0.25) return null;
+  const scale = cam.f / zc;
+  return {
+    x: innerWidth * 0.5 + vdot(q, cam.right) * scale,
+    y: innerHeight * 0.52 - vdot(q, cam.up) * scale,
+    s: scale,
+    z: zc
+  };
+}
+
+// ——— Config (MVP only) ———
+const cfg = {
+  shape: 'triple',   // triple | rect | square
+  count: 36,
+  spacing: 1.55,
+  bodyR: 0.42,
+  // formFacing = footprint axes (ranks/files in world). unitFacing = where men look.
+  formFacing: 0,     // lattice orientation — frozen across FACE orders
+  unitFacing: 0,     // attention / dress front — changes on FACE L/R/ABOUT
+  senseR: 16,
+  press: 6.5,
+  sep: 2.8,
+  paused: false,
+  showTargets: false,
+  timeScale: 1
+};
+
+// Formation anchor is world origin — not a person
+const ANCHOR = { x: 0, z: 0 };
+
+// Per-soldier drill phases (each man decides for himself)
+const PHASE = {
+  MUSTER: 'muster', // mass near the site
+  FORM: 'form',     // occupy ranks/files (mental seats)
+  DRESS: 'dress'    // fine place + face
+};
+
+// Mental / loco knobs (small fixed set)
+const MIND = {
+  arrive: 0.32,      // × spacing — on post
+  lock: 0.42,
+  unlock: 1.35,      // only unlock if really shoved
+  seated: 0.48,      // body ON seat if within this × spacing (perception)
+  // Someone else is "using" a seat if within this (slightly larger than seated)
+  occupy: 0.58,      // × spacing — body near seat center counts as taken
+  // FORM stickiness — stop musical chairs
+  claimTimeout: 3.6,       // only abandon after long stuck
+  minCommit: 1.4,          // refuse voluntary re-pick for this long
+  switchMargin: 2.4,       // need *much* better cell to switch (×spacing)
+  rescoreEvery: 0.55,      // re-evaluate less often
+  stickBonus: 3.2,         // ×spacing added to current belief score
+  approachReserve: 1.35,   // mild: closer man approaching this cell
+  progressFrac: 0.12,      // claim timeout only if not closing on seat
+  // Cascade through nearest free seats in order (still only local candidates)
+  nearRankMax: 12,         // 1st..Nth nearest free until one is truly empty
+  // Travel-face only when this far from seat (else unit face — kills near-post twirl)
+  relocateFace: 1.05,      // × spacing
+  // Scale: candidate ring around me
+  candMax: 48,
+  candRadius: 11,          // don't even consider far-side seats
+  seekerCap: 24,
+  // Private phase gates
+  musterRadius: 9.0,
+  musterInner: 6.5,
+  musterFriends: 5,
+  musterFriendR: 6.5,
+  musterHold: 1.15,
+  formToDressHold: 0.65,
+  dressBreak: 2.1,
+  formBreakPad: 10          // + formation radius; don't muster just for crossing the block
+};
+const LOCO = {
+  walk: 1.4,
+  run: 3.2,
+  shuffle: 0.55,
+  turn: 4.2,
+  moveCommit: 0.35,
+  faceAlign: 0.22,
+  stopSpeed: 0.06,
+  // Collision / traffic
+  travelSoft: 1.15,        // × body soft while relocating (room to pass)
+  slidePush: 0.55,         // lateral peel on hard contact
+  jamSlide: 0.9,           // desire-space peel when stuck against bodies
+  faceOrderHold: 0.55      // seconds of pure in-place turn after FACE command
+};
+
+const soldiers = [];
+let time = 0;
+let _frameMs = 0;
+
+// Reused buffers (avoid per-frame alloc thrash)
+const _nearBuf = [];
+const _candBuf = []; // slot indices
+let _spatial = null; // Map<number, soldier[]>
+let _spatialCell = 4;
+const _SPATIAL_STRIDE = 4096; // key = (ix+off)*stride + (iz+off)
+
+// Cached lattice (rebuild only when shape/N/spacing/facing change)
+let _lat = null; // { key, plan, slots, wx, wz, nSlots, cols, rows, maxLat, sp, fwd, right }
+
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function rand(a, b) { return a + Math.random() * (b - a); }
+function dist2(ax, az, bx, bz) { return Math.hypot(ax - bx, az - bz); }
+function dist2sq(ax, az, bx, bz) { const dx = ax - bx, dz = az - bz; return dx * dx + dz * dz; }
+
+/** Integer-key spatial hash — faster than string keys */
+function rebuildSpatial(cellSize) {
+  _spatialCell = cellSize;
+  const map = new Map();
+  const off = 512;
+  const stride = _SPATIAL_STRIDE;
+  for (let i = 0; i < soldiers.length; i++) {
+    const s = soldiers[i];
+    const ix = (Math.floor(s.x / cellSize) + off) | 0;
+    const iz = (Math.floor(s.z / cellSize) + off) | 0;
+    const key = ix * stride + iz;
+    let bucket = map.get(key);
+    if (!bucket) { bucket = []; map.set(key, bucket); }
+    bucket.push(s);
+  }
+  _spatial = map;
+  return map;
+}
+
+/** Fill _nearBuf with soldiers within radius. Returns count. */
+function queryNear(x, z, radius, self) {
+  _nearBuf.length = 0;
+  const cs = _spatialCell;
+  const r = radius;
+  const r2 = r * r;
+  if (!_spatial) {
+    for (let i = 0; i < soldiers.length; i++) {
+      const o = soldiers[i];
+      if (o === self) continue;
+      if (dist2sq(x, z, o.x, o.z) < r2) _nearBuf.push(o);
+    }
+    return _nearBuf.length;
+  }
+  const off = 512;
+  const stride = _SPATIAL_STRIDE;
+  const i0 = Math.floor((x - r) / cs), i1 = Math.floor((x + r) / cs);
+  const z0 = Math.floor((z - r) / cs), z1 = Math.floor((z + r) / cs);
+  for (let ix = i0; ix <= i1; ix++) {
+    for (let iz = z0; iz <= z1; iz++) {
+      const bucket = _spatial.get((ix + off) * stride + (iz + off));
+      if (!bucket) continue;
+      for (let k = 0; k < bucket.length; k++) {
+        const o = bucket[k];
+        if (o === self) continue;
+        const dx = o.x - x, dz = o.z - z;
+        if (dx * dx + dz * dz < r2) _nearBuf.push(o);
+      }
+    }
+  }
+  return _nearBuf.length;
+}
+function angleDiff(a, b) {
+  let d = a - b;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+/** Footprint axes (ranks/files). Use formFacing — not unitFacing. */
+function facingVectors(face) {
+  const f = face != null ? face : cfg.formFacing;
+  const fwd = { x: Math.sin(f), z: Math.cos(f) };
+  const right = { x: Math.cos(f), z: -Math.sin(f) };
+  return { fwd, right };
+}
+function wrapAngle(a) {
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
+
+// ——— Doctrine: what the shape *is* (shared idea only) ———
+function formationPlan(n) {
+  if (cfg.shape === 'square') {
+    const side = Math.max(1, Math.ceil(Math.sqrt(n)));
+    return { cols: side, rows: side };
+  }
+  if (cfg.shape === 'rect') {
+    const aspect = 2.4;
+    const cols = Math.max(2, Math.ceil(Math.sqrt(n * aspect)));
+    const rows = Math.max(1, Math.ceil(n / cols));
+    return { cols, rows };
+  }
+  const rows = 3;
+  const cols = Math.max(1, Math.ceil(n / rows));
+  return { cols, rows };
+}
+
+/**
+ * Full rectangular lattice indexed si = r * cols + c (O(1) world↔seat).
+ * May have ≥ n cells (empty seats OK). Ensures plan covers n men.
+ */
+function buildLattice(n) {
+  const sp = cfg.spacing;
+  const plan = formationPlan(n);
+  let { cols, rows } = plan;
+  while (cols * rows < n) {
+    if (cfg.shape === 'triple') cols++;
+    else if (rows <= cols) rows++;
+    else cols++;
+  }
+  plan.cols = cols; plan.rows = rows;
+  const { fwd, right } = facingVectors(cfg.formFacing);
+  const nSlots = cols * rows;
+  const slots = new Array(nSlots);
+  const wx = new Float64Array(nSlots);
+  const wz = new Float64Array(nSlots);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const si = r * cols + c;
+      const lat = (c - (cols - 1) * 0.5) * sp;
+      const dep = ((rows - 1) * 0.5 - r) * sp;
+      slots[si] = { c, r, lat, dep };
+      wx[si] = right.x * lat + fwd.x * dep;
+      wz[si] = right.z * lat + fwd.z * dep;
+    }
+  }
+  return {
+    plan, slots, wx, wz, nSlots, cols, rows, sp, fwd, right,
+    maxLat: Math.max(sp * 0.5, (cols - 1) * sp * 0.5)
+  };
+}
+
+function getLattice() {
+  const n = soldiers.length;
+  // Lattice keyed on formFacing only — unitFacing must NOT rebuild seats
+  const key = cfg.shape + '|' + n + '|' + cfg.spacing + '|' + cfg.formFacing;
+  if (_lat && _lat.key === key) return _lat;
+  const L = buildLattice(n);
+  L.key = key;
+  _lat = L;
+  return L;
+}
+
+/** O(1) world → seat index (full grid). */
+function worldToSlotIndex(x, z, L) {
+  const lat = x * L.right.x + z * L.right.z;
+  const dep = x * L.fwd.x + z * L.fwd.z;
+  const c = Math.round(lat / L.sp + (L.cols - 1) * 0.5);
+  const r = Math.round((L.rows - 1) * 0.5 - dep / L.sp);
+  if (c < 0 || r < 0 || c >= L.cols || r >= L.rows) return -1;
+  return r * L.cols + c;
+}
+
+/** Nearest seat under seatedR using O(1) guess + 3×3 refine */
+function nearestSeat(x, z, L, seatedR) {
+  let si = worldToSlotIndex(x, z, L);
+  let best = -1, bestD = seatedR;
+  const check = (s) => {
+    if (s < 0 || s >= L.nSlots) return;
+    const d = Math.hypot(x - L.wx[s], z - L.wz[s]);
+    if (d <= bestD) { bestD = d; best = s; }
+  };
+  if (si >= 0) {
+    const c0 = si % L.cols, r0 = (si / L.cols) | 0;
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const c = c0 + dc, r = r0 + dr;
+        if (c < 0 || r < 0 || c >= L.cols || r >= L.rows) continue;
+        check(r * L.cols + c);
+      }
+    }
+  } else {
+    // off-grid: clamp to edge cell then 3×3
+    const lat = x * L.right.x + z * L.right.z;
+    const dep = x * L.fwd.x + z * L.fwd.z;
+    const c0 = clamp(Math.round(lat / L.sp + (L.cols - 1) * 0.5), 0, L.cols - 1);
+    const r0 = clamp(Math.round((L.rows - 1) * 0.5 - dep / L.sp), 0, L.rows - 1);
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const c = c0 + dc, r = r0 + dr;
+        if (c < 0 || r < 0 || c >= L.cols || r >= L.rows) continue;
+        check(r * L.cols + c);
+      }
+    }
+  }
+  return best;
+}
+
+/** Collect nearby candidate seats into _candBuf (spiral from local cell). */
+function collectCandidates(x, z, L, maxCand, radius) {
+  _candBuf.length = 0;
+  const r2 = radius * radius;
+  let c0 = worldToSlotIndex(x, z, L);
+  if (c0 < 0) {
+    const lat = x * L.right.x + z * L.right.z;
+    const dep = x * L.fwd.x + z * L.fwd.z;
+    const c = clamp(Math.round(lat / L.sp + (L.cols - 1) * 0.5), 0, L.cols - 1);
+    const r = clamp(Math.round((L.rows - 1) * 0.5 - dep / L.sp), 0, L.rows - 1);
+    c0 = r * L.cols + c;
+  }
+  const cc = c0 % L.cols, rr = (c0 / L.cols) | 0;
+  const push = (si) => {
+    if (si < 0 || si >= L.nSlots) return;
+    const dx = L.wx[si] - x, dz = L.wz[si] - z;
+    if (dx * dx + dz * dz <= r2) _candBuf.push(si);
+  };
+  push(c0);
+  // ring expansion until maxCand or empty rings past radius
+  const maxRing = Math.ceil(radius / L.sp) + 2;
+  for (let ring = 1; ring <= maxRing && _candBuf.length < maxCand; ring++) {
+    for (let dc = -ring; dc <= ring && _candBuf.length < maxCand; dc++) {
+      const c1 = cc + dc, r1 = rr - ring, r2b = rr + ring;
+      if (c1 >= 0 && c1 < L.cols) {
+        if (r1 >= 0 && r1 < L.rows) push(r1 * L.cols + c1);
+        if (r2b >= 0 && r2b < L.rows && r2b !== r1) push(r2b * L.cols + c1);
+      }
+    }
+    for (let dr = -ring + 1; dr <= ring - 1 && _candBuf.length < maxCand; dr++) {
+      const r1 = rr + dr, c1 = cc - ring, c2 = cc + ring;
+      if (r1 >= 0 && r1 < L.rows) {
+        if (c1 >= 0 && c1 < L.cols) push(r1 * L.cols + c1);
+        if (c2 >= 0 && c2 < L.cols && c2 !== c1) push(r1 * L.cols + c2);
+      }
+    }
+  }
+  return _candBuf.length;
+}
+
+// ——— Soldier ———
+function rollPrefs(s) {
+  s.prefEdge = rand(-1, 1);
+  s.prefFront = rand(-1, 1);
+  s.prefDense = rand(-1, 1);
+  if (Math.random() < 0.35) s.prefEdge *= 0.35;
+  if (Math.random() < 0.35) s.prefFront *= 0.35;
+}
+
+function makeSoldier(id, x, z) {
+  const s = {
+    id, x, z, vx: 0, vz: 0, speed: 0,
+    heading: rand(-Math.PI, Math.PI),
+    // private drill phase
+    drill: PHASE.MUSTER,
+    drillTime: 0,
+    nearPostTime: 0,
+    musterReady: rand(0.0, 0.55), // personal stagger so not everyone forms same frame
+    // private mind
+    beliefSi: -1,
+    targetX: x, targetZ: z,
+    slotDist: 0,
+    slotLocked: false,
+    claimTimer: 0,
+    commitTimer: 0,          // how long I've held this belief
+    lastSlotDist: 99,
+    rescoreT: rand(0, 0.6),  // desync re-picks across the unit
+    // local SA (refreshed each mind tick)
+    distSite: 0,
+    nFriends: 0,
+    // prefs
+    prefEdge: 0, prefFront: 0, prefDense: 0,
+    // motion flags
+    needMove: false,
+    faceMode: 'unit', // 'unit' | 'travel'
+    travelHeading: 0,
+    faceOrderT: 0,     // >0: pure in-place turn after FACE command
+    holding: false,
+    gait: rand(0, Math.PI * 2)
+  };
+  rollPrefs(s);
+  return s;
+}
+
+function spawnField() {
+  soldiers.length = 0;
+  const n = cfg.count;
+  for (let i = 0; i < n; i++) {
+    // Scatter around field, not already on 0,0
+    const a = rand(0, Math.PI * 2);
+    const r = rand(8, 28);
+    soldiers.push(makeSoldier(i, Math.cos(a) * r, Math.sin(a) * r));
+  }
+}
+
+function resetMinds() {
+  for (const s of soldiers) {
+    s.beliefSi = -1;
+    s.slotLocked = false;
+    s.claimTimer = 0;
+    s.commitTimer = 0;
+    s.lastSlotDist = 99;
+    s.holding = false;
+    s.needMove = false;
+    s.faceOrderT = 0;
+    s.targetX = s.x; s.targetZ = s.z;
+    s.slotDist = 0;
+    s.drill = PHASE.MUSTER;
+    s.drillTime = 0;
+    s.nearPostTime = 0;
+    s.musterReady = rand(0.0, 0.55);
+    s.rescoreT = rand(0, 0.6);
+  }
+}
+
+/** Stationary face: change attention only — seats / formFacing unchanged. */
+function issueFaceOrder(delta) {
+  cfg.unitFacing = wrapAngle(cfg.unitFacing + delta);
+  const hold = LOCO.faceOrderHold;
+  for (const s of soldiers) {
+    // Everyone turns; MUSTER still faces new attention when they arrive
+    s.faceMode = 'unit';
+    s.faceOrderT = hold;
+    s.needMove = false;
+    s.holding = false;
+    // Keep seat belief — do not resetMinds
+    if (s.drill === PHASE.DRESS || s.slotLocked) {
+      s.travelHeading = cfg.unitFacing;
+    }
+  }
+}
+
+function setDrill(s, phase) {
+  if (s.drill === phase) return;
+  s.drill = phase;
+  s.drillTime = 0;
+  if (phase === PHASE.MUSTER) {
+    s.slotLocked = false;
+    s.nearPostTime = 0;
+    s.beliefSi = -1;
+    s.commitTimer = 0;
+  }
+  if (phase === PHASE.FORM) {
+    // Keep existing belief if we fell back from dress; wipe only when coming from muster
+    if (s.beliefSi == null) s.beliefSi = -1;
+    s.slotLocked = false;
+    s.nearPostTime = 0;
+    s.claimTimer = 0;
+    s.commitTimer = 0;
+  }
+  if (phase === PHASE.DRESS) {
+    s.slotLocked = true;
+    s.claimTimer = 0;
+  }
+}
+
+// ——— Private mental lattice + phase decisions (no global auction / no god phase) ———
+// Doctrine: form shape at world (0,0). Same cell geometry for everyone (known site).
+// Private: which cell I want, occupancy I *see*, prefs, re-pick, and when to muster/form/dress.
+// v02: O(1) seats, candidate rings, dress fast-path, cached lattice — same decisions, less work.
+function updateMinds(dt) {
+  const n = soldiers.length;
+  if (!n) return;
+  const L = getLattice();
+  const { slots, wx, wz, nSlots, cols, rows, sp, fwd, right, maxLat } = L;
+  const seatedR = sp * MIND.seated;
+  const occupyR = sp * MIND.occupy; // perception: body near seat = taken
+  const arriveR = sp * MIND.arrive;
+  const lockR = sp * MIND.lock;
+  const unlockR = sp * MIND.unlock;
+  const sense = cfg.senseR;
+  const candR = Math.max(MIND.candRadius, sp * 6);
+  const candMax = MIND.candMax;
+  const seekerCap = MIND.seekerCap;
+  // Stay in FORM while still near the formation footprint (not across-field exile)
+  const formHalf = Math.hypot((L.cols - 1) * sp * 0.5, (L.rows - 1) * sp * 0.5);
+  const formBreakR = formHalf + MIND.formBreakPad;
+
+  // Spatial hash once
+  rebuildSpatial(Math.max(3.5, sense * 0.45));
+
+  // Body on seat: O(n) via O(1) nearest-seat guess
+  const bodySeat = new Int32Array(n);
+  for (let i = 0; i < n; i++) {
+    const s = soldiers[i];
+    bodySeat[i] = nearestSeat(s.x, s.z, L, seatedR);
+  }
+
+  for (let si = 0; si < n; si++) {
+    const s = soldiers[si];
+    s.drillTime += dt;
+    s.distSite = Math.hypot(s.x - ANCHOR.x, s.z - ANCHOR.z);
+
+    // ——— DRESS fast path: planted men skip Nash / candidate scoring ———
+    if (s.drill === PHASE.DRESS && s.beliefSi >= 0 && s.beliefSi < nSlots) {
+      const bsi = s.beliefSi;
+      s.targetX = wx[bsi];
+      s.targetZ = wz[bsi];
+      s.slotDist = Math.hypot(s.x - s.targetX, s.z - s.targetZ);
+      s.commitTimer += dt;
+      // phase breaks
+      if (s.distSite > formBreakR) {
+        setDrill(s, PHASE.MUSTER);
+        continue;
+      }
+      if (s.slotDist > sp * MIND.dressBreak) {
+        const keep = s.beliefSi;
+        setDrill(s, PHASE.FORM);
+        s.beliefSi = keep;
+        // fall through next frame as FORM
+        continue;
+      }
+      // local check: someone else at/near my seat (and at least as close as me)
+      const nVis = queryNear(s.x, s.z, Math.max(sense * 0.55, sp * 3), s);
+      let taken = false;
+      for (let k = 0; k < nVis; k++) {
+        const o = _nearBuf[k];
+        const dO = Math.hypot(o.x - wx[bsi], o.z - wz[bsi]);
+        if (dO <= occupyR && s.slotDist + 1e-4 >= dO) { taken = true; break; }
+      }
+      if (taken) {
+        setDrill(s, PHASE.FORM);
+        s.slotLocked = false;
+        continue;
+      }
+      s.slotLocked = true;
+      if (s.slotDist < arriveR * 1.5) s.nearPostTime += dt;
+      continue;
+    }
+
+    // Local SA via spatial query
+    let nFriends = 0;
+    let comX = 0, comZ = 0;
+    queryNear(s.x, s.z, sense, s);
+    // Cap visible set for scoring (nearest first) — keeps logic, bounds O(neighbors)
+    if (_nearBuf.length > 48) {
+      const sx = s.x, sz = s.z;
+      _nearBuf.sort((a, b) => {
+        const da = (a.x - sx) * (a.x - sx) + (a.z - sz) * (a.z - sz);
+        const db = (b.x - sx) * (b.x - sx) + (b.z - sz) * (b.z - sz);
+        return da - db;
+      });
+      _nearBuf.length = 48;
+    }
+    const vis = _nearBuf.slice();
+    for (let k = 0; k < vis.length; k++) {
+      const o = vis[k];
+      const d = Math.hypot(s.x - o.x, s.z - o.z);
+      if (d < MIND.musterFriendR) {
+        nFriends++;
+        comX += o.x; comZ += o.z;
+      }
+    }
+    s.nFriends = nFriends;
+    if (nFriends > 0) { comX /= nFriends; comZ /= nFriends; }
+    else { comX = s.x; comZ = s.z; }
+
+    // ——— Private phase machine ———
+    if (s.drill === PHASE.MUSTER) {
+      const holdNeed = MIND.musterHold + s.musterReady;
+      const atInner = s.distSite < MIND.musterInner;
+      const atOuter = s.distSite < MIND.musterRadius;
+      const withFriends = nFriends >= MIND.musterFriends;
+      const readyPacked = atInner && withFriends && s.drillTime >= holdNeed;
+      const readySolo = atInner && s.drillTime >= holdNeed + 0.9;
+      const readyOuter = atOuter && withFriends && s.drillTime >= holdNeed + 0.7;
+      if (readyPacked || readySolo || readyOuter) setDrill(s, PHASE.FORM);
+    } else if (s.drill === PHASE.FORM) {
+      if (s.distSite > formBreakR) setDrill(s, PHASE.MUSTER);
+      else if (
+        s.beliefSi >= 0 &&
+        s.nearPostTime >= MIND.formToDressHold &&
+        s.speed < 0.35 &&
+        s.slotDist < arriveR * 1.15
+      ) setDrill(s, PHASE.DRESS);
+    } else if (s.drill === PHASE.DRESS) {
+      if (s.distSite > formBreakR) setDrill(s, PHASE.MUSTER);
+      else if (s.slotDist > sp * MIND.dressBreak) {
+        const keep = s.beliefSi;
+        setDrill(s, PHASE.FORM);
+        s.beliefSi = keep;
+      }
+    }
+
+    // ——— MUSTER ———
+    if (s.drill === PHASE.MUSTER) {
+      s.beliefSi = -1;
+      s.slotLocked = false;
+      s.slotDist = 0;
+      s.nearPostTime = 0;
+      s.commitTimer = 0;
+      const ax = ANCHOR.x * 0.75 + comX * 0.25;
+      const az = ANCHOR.z * 0.75 + comZ * 0.25;
+      const salt = ((s.id * 17) & 31) - 15;
+      const back = sp * (0.8 + (s.id % 5) * 0.4);
+      s.targetX = ax + right.x * salt * sp * 0.14 - fwd.x * back * 0.2;
+      s.targetZ = az + right.z * salt * sp * 0.14 - fwd.z * back * 0.2;
+      continue;
+    }
+
+    // ——— FORM / active: candidate seats only (not full lattice) ———
+    // Always include current belief
+    collectCandidates(s.x, s.z, L, candMax, candR);
+    if (s.beliefSi >= 0 && s.beliefSi < nSlots && _candBuf.indexOf(s.beliefSi) < 0) {
+      _candBuf.push(s.beliefSi);
+    }
+    const cands = _candBuf.slice(); // local list for this agent
+    const nCand = cands.length;
+
+    // distances to candidates only
+    const myTo = new Float64Array(nCand);
+    for (let i = 0; i < nCand; i++) {
+      const si = cands[i];
+      myTo[i] = Math.hypot(s.x - wx[si], s.z - wz[si]);
+    }
+
+    // ——— Occupancy perception (local only) ———
+    // Seat is taken by someone else if I *see* another man who is:
+    //   (1) within occupyR of the seat center, OR
+    //   (2) assigned bodySeat = that seat, OR
+    //   (3) has that belief and is closer to it than I am (they're claiming it).
+    // Critical: if *I* am also on the seat but another is closer, it is still taken for me
+    // so we don't both lock/dress on the same post.
+    const occupied = new Uint8Array(nCand);
+    const seekers = [s];
+    for (let k = 0; k < vis.length; k++) {
+      const o = vis[k];
+      if (o.id < 0 || o.id >= n || soldiers[o.id] !== o) continue;
+      const oSeat = bodySeat[o.id];
+      for (let i = 0; i < nCand; i++) {
+        const si = cands[i];
+        const dO = Math.hypot(o.x - wx[si], o.z - wz[si]);
+        let taken = false;
+        if (dO <= occupyR) taken = true;
+        else if (oSeat === si) taken = true;
+        else if (o.beliefSi === si && dO + sp * 0.1 < myTo[i]) taken = true;
+        if (taken) {
+          // Only "occupied by other" — if I'm strictly closer to the seat, I own it
+          if (myTo[i] + 1e-4 >= dO) occupied[i] = 1;
+        }
+      }
+      const planted = o.drill === PHASE.DRESS || (o.slotLocked && (o.slotDist || 99) < arriveR * 1.2);
+      if (!planted && seekers.length < seekerCap) seekers.push(o);
+    }
+
+    /** Is candidate i free for *me*? (not held by a closer/visible other) */
+    function isFreeForMe(i) {
+      return !occupied[i];
+    }
+
+    function scoreAt(i) {
+      const si = cands[i];
+      const d = myTo[i];
+      const sl = slots[si];
+      let sc = -d;
+      const frontness = 1 - (sl.r / Math.max(1, rows - 1));
+      sc += s.prefFront * frontness * sp * 1.2;
+      const edgeness = Math.abs(sl.lat) / maxLat;
+      sc += s.prefEdge * edgeness * sp * 1.0;
+      if (si === s.beliefSi) sc += sp * MIND.stickBonus;
+      if (!isFreeForMe(i)) sc -= 1000;
+      return sc;
+    }
+
+    /**
+     * Cascade: try nearest free seat, then 2nd nearest free, … until one is available.
+     * Only among local candidates (candRadius). Never treat occupied-as-me as free.
+     */
+    function pickBest(excludeSi) {
+      const ranked = [];
+      for (let i = 0; i < nCand; i++) {
+        if (excludeSi != null && cands[i] === excludeSi) continue;
+        if (!isFreeForMe(i)) continue; // perception: taken → not a candidate
+        ranked.push(i);
+      }
+      ranked.sort((a, b) => myTo[a] - myTo[b]);
+      if (!ranked.length) return -1;
+
+      const K = Math.min(MIND.nearRankMax, ranked.length);
+
+      // Sticky only if my belief is still free (not occupied by someone else)
+      if (s.beliefSi >= 0 && s.beliefSi !== excludeSi) {
+        for (let r = 0; r < K; r++) {
+          if (cands[ranked[r]] === s.beliefSi) {
+            // free for me and among nearest free → keep
+            return s.beliefSi;
+          }
+        }
+        // belief not free or not in nearest free list → fall through to cascade
+      }
+
+      // 1st free, 2nd free, … first where I'm the closest claimant among seekers
+      for (let r = 0; r < K; r++) {
+        const i = ranked[r];
+        const si = cands[i];
+        let iAmClosest = true;
+        for (let k = 0; k < seekers.length; k++) {
+          const o = seekers[k];
+          if (o === s) continue;
+          const planted = o.drill === PHASE.DRESS || (o.slotLocked && (o.slotDist || 99) < arriveR * 1.2);
+          // Planted on *this* seat already handled by occupied; planted elsewhere ignore
+          if (planted && o.beliefSi !== si) continue;
+          const dO = Math.hypot(o.x - wx[si], o.z - wz[si]);
+          if (dO + sp * 0.06 < myTo[i]) { iAmClosest = false; break; }
+        }
+        if (iAmClosest) return si;
+      }
+      // All top-K free seats have a closer free man: still take nearest free (local),
+      // not a far exile — closest free is better than dancing on a taken post
+      return cands[ranked[0]];
+    }
+
+    function commit(slot, forceWalk) {
+      if (slot < 0 || slot >= nSlots) return;
+      const changed = slot !== s.beliefSi;
+      s.beliefSi = slot;
+      s.targetX = wx[slot];
+      s.targetZ = wz[slot];
+      s.slotDist = Math.hypot(s.x - s.targetX, s.z - s.targetZ);
+      if (changed || forceWalk) {
+        s.slotLocked = false;
+        s.claimTimer = 0;
+        s.commitTimer = 0;
+        s.lastSlotDist = s.slotDist;
+        s.holding = false;
+        s.nearPostTime = 0;
+        // Travel-face only when truly relocating (not micro near post)
+        if (s.slotDist > sp * MIND.relocateFace && s.faceOrderT <= 0) {
+          s.faceMode = 'travel';
+          s.needMove = true;
+          s.travelHeading = Math.atan2(s.targetX - s.x, s.targetZ - s.z);
+        } else {
+          s.faceMode = 'unit';
+        }
+      }
+    }
+
+    // If currently in DRESS but not on fast path (no belief), pick
+    if (s.drill === PHASE.DRESS) {
+      if (s.beliefSi < 0 || s.beliefSi >= nSlots) commit(pickBest(null), true);
+      else {
+        s.targetX = wx[s.beliefSi];
+        s.targetZ = wz[s.beliefSi];
+        s.slotDist = Math.hypot(s.x - s.targetX, s.z - s.targetZ);
+        s.slotLocked = true;
+      }
+      continue;
+    }
+
+    // ——— FORM sticky belief ———
+    if (s.beliefSi >= 0 && s.beliefSi < nSlots) {
+      s.targetX = wx[s.beliefSi];
+      s.targetZ = wz[s.beliefSi];
+      s.slotDist = Math.hypot(s.x - s.targetX, s.z - s.targetZ);
+      s.commitTimer += dt;
+      const closing = s.slotDist < s.lastSlotDist - sp * MIND.progressFrac * 0.15;
+      if (s.slotDist < s.lastSlotDist) s.lastSlotDist = s.slotDist;
+
+      // takenHard: my believed seat is occupied by someone else (same perception as pick)
+      let takenHard = false;
+      for (let i = 0; i < nCand; i++) {
+        if (cands[i] === s.beliefSi && occupied[i]) { takenHard = true; break; }
+      }
+      // also if not in cand list: direct check vs visible men
+      if (!takenHard && s.beliefSi >= 0) {
+        for (let k = 0; k < vis.length; k++) {
+          const o = vis[k];
+          const dO = Math.hypot(o.x - wx[s.beliefSi], o.z - wz[s.beliefSi]);
+          if (dO <= occupyR && s.slotDist + 1e-4 >= dO) { takenHard = true; break; }
+        }
+      }
+
+      if (s.slotLocked) {
+        if (s.slotDist > unlockR || takenHard) {
+          s.slotLocked = false;
+          s.nearPostTime = 0;
+          if (takenHard) commit(pickBest(s.beliefSi), true);
+        } else {
+          if (s.slotDist < arriveR && s.speed < 0.5) s.nearPostTime += dt;
+          else s.nearPostTime = Math.max(0, s.nearPostTime - dt * 0.4);
+          continue;
+        }
+      }
+
+      // Don't lock/plant if seat is shared with a closer man
+      if (s.slotDist < lockR && !takenHard) {
+        s.slotLocked = true;
+        s.claimTimer = 0;
+        if (s.slotDist < arriveR && s.speed < 0.5) s.nearPostTime += dt;
+        continue;
+      }
+
+      if (s.slotDist < arriveR) s.claimTimer = 0;
+      else if (!closing && s.speed < 0.35) s.claimTimer += dt;
+      else s.claimTimer = Math.max(0, s.claimTimer - dt * 0.35);
+
+      if (takenHard) commit(pickBest(s.beliefSi), true);
+      else if (s.claimTimer >= MIND.claimTimeout && s.commitTimer >= MIND.minCommit) {
+        commit(pickBest(s.beliefSi), true);
+      } else if (s.commitTimer >= MIND.minCommit) {
+        s.rescoreT -= dt;
+        if (s.rescoreT <= 0) {
+          s.rescoreT = MIND.rescoreEvery + rand(0, 0.35);
+          // find current score
+          let curI = -1;
+          for (let i = 0; i < nCand; i++) if (cands[i] === s.beliefSi) { curI = i; break; }
+          const cur = curI >= 0 ? scoreAt(curI) : -1e9;
+          const best = pickBest(null);
+          if (best !== s.beliefSi && best >= 0) {
+            let bestSc = -1e9;
+            for (let i = 0; i < nCand; i++) if (cands[i] === best) { bestSc = scoreAt(i); break; }
+            if (bestSc > cur + sp * MIND.switchMargin) commit(best, true);
+          }
+        }
+      }
+    } else {
+      commit(pickBest(null), true);
+    }
+  }
+}
+
+// ——— Physics: desire + headed walk + hard discs ———
+function stepSoldier(s, dt) {
+  const sp = cfg.spacing;
+  const hardR = cfg.bodyR;
+  const arriveR = sp * MIND.arrive;
+  const drill = s.drill;
+
+  // Separation via spatial neighbors — wider soft bubble while relocating so paths can slide
+  let sepX = 0, sepZ = 0;
+  let jamX = 0, jamZ = 0, jamN = 0;
+  const plantDress = drill === PHASE.DRESS && s.slotDist < arriveR * 1.6;
+  const relocating = drill === PHASE.MUSTER || (drill === PHASE.FORM && !(s.slotLocked && s.slotDist < sp * MIND.lock));
+  const softMul = plantDress ? 0.55 : (relocating ? LOCO.travelSoft : 0.95);
+  const soft = (hardR * 2 + 0.4) * softMul;
+  const nSep = queryNear(s.x, s.z, soft * 1.05, s);
+  const hf0 = Math.sin(s.heading), hz0 = Math.cos(s.heading);
+  const rf0 = Math.cos(s.heading), rz0 = -Math.sin(s.heading);
+  for (let k = 0; k < nSep; k++) {
+    const o = _nearBuf[k];
+    const ox = s.x - o.x, oz = s.z - o.z;
+    const d = Math.hypot(ox, oz);
+    if (d > 1e-4 && d < soft) {
+      const t = (soft - d) / soft;
+      const w = plantDress ? (d < hardR * 2.05 ? 1.2 : 0.15) : 1.0;
+      // radial push
+      sepX += (ox / d) * t * t * w;
+      sepZ += (oz / d) * t * t * w;
+      // if neighbor is ahead while we're relocating, peel right (traffic)
+      if (relocating && !plantDress) {
+        const ahead = (-ox) * hf0 + (-oz) * hz0; // from me toward them? o-s is -ox
+        const toThem = (o.x - s.x) * hf0 + (o.z - s.z) * hz0;
+        if (toThem > 0.05 && d < soft * 0.95) {
+          const side = (s.id & 1) ? 1 : -1; // stable personal side bias
+          sepX += rf0 * side * t * 0.85;
+          sepZ += rz0 * side * t * 0.85;
+        }
+        if (d < hardR * 2.4 && s.speed < 0.55) {
+          jamX += rf0 * ((s.id & 1) ? 1 : -1);
+          jamZ += rz0 * ((s.id & 1) ? 1 : -1);
+          jamN++;
+        }
+      }
+    }
+  }
+
+  let dx = 0, dz = 0;
+  const gx = s.targetX - s.x, gz = s.targetZ - s.z;
+  const gd = Math.hypot(gx, gz) || 1;
+
+  if (drill === PHASE.MUSTER) {
+    const k = cfg.press * (s.distSite > 14 ? 1.15 : 0.7);
+    dx += (gx / gd) * k;
+    dz += (gz / gd) * k;
+  } else if (drill === PHASE.FORM) {
+    const onPost = s.slotDist < arriveR || (s.slotLocked && s.slotDist < sp * MIND.lock);
+    if (!onPost) {
+      const k = cfg.press * (s.slotDist > sp * 2 ? 1.05 : 0.6);
+      dx += (gx / gd) * k;
+      dz += (gz / gd) * k;
+    } else if (s.slotDist > 0.06) {
+      dx += gx * cfg.press * 0.16;
+      dz += gz * cfg.press * 0.16;
+    }
+  } else {
+    // DRESS: strong magnet back to seat; no wander
+    if (s.slotDist > 0.04) {
+      dx += gx * cfg.press * 0.35;
+      dz += gz * cfg.press * 0.35;
+    }
+  }
+
+  const sepGain = drill === PHASE.MUSTER ? 0.85 : (plantDress ? 0.35 : 1.05);
+  dx += sepX * cfg.sep * sepGain;
+  dz += sepZ * cfg.sep * sepGain;
+  // Stuck against bodies: slide sideways instead of headbutting
+  if (jamN > 0 && relocating) {
+    const jm = Math.hypot(jamX, jamZ) || 1;
+    dx += (jamX / jm) * cfg.press * LOCO.jamSlide;
+    dz += (jamZ / jm) * cfg.press * LOCO.jamSlide;
+  }
+
+  // Pure in-place FACE order: no walk, no sep-driven twirl
+  if (s.faceOrderT > 0) {
+    s.faceOrderT = Math.max(0, s.faceOrderT - dt);
+    dx = 0; dz = 0;
+  }
+
+  const mag = Math.hypot(dx, dz);
+  const onPost = drill !== PHASE.MUSTER && (
+    s.slotDist < arriveR || (s.slotLocked && s.slotDist < sp * MIND.lock)
+  );
+  const farRelocate = drill === PHASE.MUSTER || s.slotDist > sp * MIND.relocateFace;
+
+  // Face + move — travel only when relocating far (kills near-post twirl)
+  if (s.faceOrderT > 0) {
+    s.faceMode = 'unit';
+    s.needMove = false;
+    s.holding = false;
+  } else if (drill === PHASE.DRESS) {
+    s.faceMode = 'unit';
+    s.needMove = s.slotDist > 0.12 && mag > 0.08;
+    s.holding = s.slotDist < arriveR * 1.25 && s.speed < 0.22;
+  } else if (onPost || !farRelocate) {
+    s.faceMode = 'unit';
+    if (onPost && mag < LOCO.moveCommit * 1.2) {
+      s.needMove = false;
+      s.holding = s.slotDist < arriveR * 1.15 && s.speed < 0.25;
+    } else if (mag >= LOCO.moveCommit) {
+      // Shuffle toward seat while facing unit front (no travel thrash)
+      s.needMove = true;
+      s.holding = false;
+    } else {
+      s.needMove = false;
+      s.holding = onPost;
+    }
+  } else if (mag >= LOCO.moveCommit) {
+    s.faceMode = 'travel';
+    s.needMove = true;
+    s.holding = false;
+    // Hysteresis: only retarget travel heading if desire swung a lot
+    const nh = Math.atan2(dx, dz);
+    if (s.travelHeading == null) s.travelHeading = nh;
+    else {
+      const dH = Math.abs(angleDiff(nh, s.travelHeading));
+      if (dH > 0.45 || mag > LOCO.moveCommit * 2) s.travelHeading = nh;
+      else s.travelHeading += angleDiff(nh, s.travelHeading) * 0.25;
+    }
+  } else {
+    s.needMove = false;
+    s.holding = onPost;
+    s.faceMode = 'unit';
+  }
+
+  const wantH = (s.faceMode === 'travel' && s.needMove) ? s.travelHeading : cfg.unitFacing;
+  const err = angleDiff(wantH, s.heading);
+  const turnStep = LOCO.turn * dt * (s.faceOrderT > 0 ? 1.25 : 1);
+  if (Math.abs(err) <= turnStep) s.heading = wantH;
+  else s.heading += clamp(err, -turnStep, turnStep);
+
+  let intent = 0;
+  if (s.needMove && s.faceOrderT <= 0) {
+    if (drill === PHASE.MUSTER) {
+      intent = s.distSite > 12 ? LOCO.run : LOCO.walk;
+    } else if (drill === PHASE.DRESS || !farRelocate) {
+      // Near post: shuffle only, preferably lateral to unit facing
+      intent = Math.min(LOCO.shuffle * 0.85, Math.max(0.15, s.slotDist * 1.6));
+    } else {
+      if (s.slotDist > sp * 4) intent = LOCO.run;
+      else if (s.slotDist > sp * 1.2) intent = LOCO.walk;
+      else intent = LOCO.shuffle;
+    }
+    const align = Math.cos(angleDiff(wantH, s.heading));
+    if (s.faceMode === 'travel') {
+      if (align < 0.3) intent *= 0.15;
+      else intent *= clamp(align, 0.2, 1);
+    } else {
+      // Unit-facing shuffle: allow slow move even while finishing turn
+      if (align < 0.0) intent *= 0.2;
+      else intent *= clamp(0.35 + 0.65 * align, 0.2, 1);
+    }
+  }
+
+  const hf = Math.sin(s.heading), hz = Math.cos(s.heading);
+  let desVx = hf * intent, desVz = hz * intent;
+
+  // Near post / dress: slide toward seat while body faces unitFacing (no twirl)
+  if (s.needMove && s.faceMode === 'unit' && s.slotDist < sp * MIND.relocateFace) {
+    desVx = gx * Math.min(1.1, intent / Math.max(0.01, s.slotDist));
+    desVz = gz * Math.min(1.1, intent / Math.max(0.01, s.slotDist));
+    const sm = Math.hypot(desVx, desVz);
+    const cap = LOCO.shuffle * (drill === PHASE.DRESS ? 0.85 : 1.0);
+    if (sm > cap) {
+      desVx *= cap / sm;
+      desVz *= cap / sm;
+    }
+  }
+
+  const a = (intent > s.speed ? 5.0 : 7.0) * dt;
+  const evx = desVx - s.vx, evz = desVz - s.vz;
+  const em = Math.hypot(evx, evz);
+  if (em > a && em > 1e-8) {
+    s.vx += (evx / em) * a;
+    s.vz += (evz / em) * a;
+  } else {
+    s.vx = desVx; s.vz = desVz;
+  }
+
+  if (drill === PHASE.DRESS && plantDress) {
+    // Kill residual drift when on post
+    if (!s.needMove || s.slotDist < 0.1) {
+      s.vx *= Math.exp(-14 * dt);
+      s.vz *= Math.exp(-14 * dt);
+    }
+  } else if (intent > 0.05 && !(drill === PHASE.DRESS && s.slotDist < sp * 0.9)) {
+    const rf = Math.cos(s.heading), rz = -Math.sin(s.heading);
+    const vFwd = s.vx * hf + s.vz * hz;
+    let vLat = s.vx * rf + s.vz * rz;
+    vLat *= Math.exp(-8 * dt);
+    s.vx = hf * Math.max(0, vFwd) + rf * vLat;
+    s.vz = hz * Math.max(0, vFwd) + rz * vLat;
+  }
+  if (intent < 0.02) {
+    s.vx *= Math.exp(-10 * dt);
+    s.vz *= Math.exp(-10 * dt);
+  }
+
+  s.speed = Math.hypot(s.vx, s.vz);
+  if (drill === PHASE.DRESS && s.speed < LOCO.stopSpeed && s.slotDist < 0.1) {
+    s.vx = 0; s.vz = 0; s.speed = 0;
+  }
+  s.x += s.vx * dt;
+  s.z += s.vz * dt;
+  s.gait += dt * (4 + s.speed * 2.5);
+}
+
+function resolveCollisions() {
+  const r = cfg.bodyR * 2;
+  const r2 = r * r;
+  const slide = LOCO.slidePush;
+  rebuildSpatial(Math.max(r * 1.25, 1.15));
+  const iters = soldiers.length > 400 ? 2 : 3;
+  for (let iter = 0; iter < iters; iter++) {
+    for (let i = 0; i < soldiers.length; i++) {
+      const a = soldiers[i];
+      const nN = queryNear(a.x, a.z, r * 1.08, a);
+      for (let k = 0; k < nN; k++) {
+        const b = _nearBuf[k];
+        if (b.id <= a.id) continue;
+        const dx = b.x - a.x, dz = b.z - a.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < r2 && d2 > 1e-12) {
+          const d = Math.sqrt(d2);
+          const push = (r - d) * 0.5;
+          const ux = dx / d, uz = dz / d;
+          // Normal separation
+          a.x -= ux * push; a.z -= uz * push;
+          b.x += ux * push; b.z += uz * push;
+          // Lateral slide so head-on jams can pass (right-hand / stable id bias)
+          const tx = -uz, tz = ux;
+          const side = (a.id + b.id) & 1 ? 1 : -1;
+          const slideAmt = push * slide;
+          // Who is relocating peels more; planted dress peels less
+          const aPlant = a.drill === PHASE.DRESS && a.slotDist < cfg.spacing * MIND.arrive * 1.5;
+          const bPlant = b.drill === PHASE.DRESS && b.slotDist < cfg.spacing * MIND.arrive * 1.5;
+          const aW = aPlant ? 0.15 : 1.0;
+          const bW = bPlant ? 0.15 : 1.0;
+          a.x += tx * side * slideAmt * aW;
+          a.z += tz * side * slideAmt * aW;
+          b.x -= tx * side * slideAmt * bW;
+          b.z -= tz * side * slideAmt * bW;
+          // Kill only closing normal speed; keep tangential (slide past)
+          const va = a.vx * ux + a.vz * uz;
+          const vb = b.vx * ux + b.vz * uz;
+          if (va > 0) { a.vx -= ux * va * 0.85; a.vz -= uz * va * 0.85; }
+          if (vb < 0) { b.vx -= ux * vb * 0.85; b.vz -= uz * vb * 0.85; }
+          // Nudge tangent velocity for relocators
+          if (!aPlant) { a.vx += tx * side * 0.35; a.vz += tz * side * 0.35; }
+          if (!bPlant) { b.vx -= tx * side * 0.35; b.vz -= tz * side * 0.35; }
+        }
+      }
+    }
+    if (iter + 1 < iters) rebuildSpatial(Math.max(r * 1.25, 1.15));
+  }
+}
+
+// ——— Render ———
+function drawGround() {
+  // origin cross
+  const o = project(0, 0, 0);
+  if (o) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(233,191,98,.55)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(o.x - 10, o.y); ctx.lineTo(o.x + 10, o.y);
+    ctx.moveTo(o.x, o.y - 10); ctx.lineTo(o.x, o.y + 10);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(233,191,98,.85)';
+    ctx.font = '11px system-ui';
+    ctx.fillText('(0,0)', o.x + 12, o.y - 8);
+    ctx.restore();
+  }
+  // light grid
+  ctx.save();
+  for (let g = -30; g <= 30; g += 5) {
+    const a1 = project(g, 0, -30), a2 = project(g, 0, 30);
+    const b1 = project(-30, 0, g), b2 = project(30, 0, g);
+    ctx.strokeStyle = g === 0 ? 'rgba(255,255,255,.12)' : 'rgba(255,255,255,.05)';
+    ctx.lineWidth = 1;
+    if (a1 && a2) { ctx.beginPath(); ctx.moveTo(a1.x, a1.y); ctx.lineTo(a2.x, a2.y); ctx.stroke(); }
+    if (b1 && b2) { ctx.beginPath(); ctx.moveTo(b1.x, b1.y); ctx.lineTo(b2.x, b2.y); ctx.stroke(); }
+  }
+  ctx.restore();
+}
+
+function drawSoldier(s, simple) {
+  const p = project(s.x, 0, s.z);
+  if (!p) return;
+  let col = '#8fd0ff';
+  if (s.drill === PHASE.MUSTER) col = '#c48cff';
+  else if (s.drill === PHASE.FORM) col = s.needMove ? '#8fd0ff' : '#6eb8e8';
+  else col = s.holding ? '#5ad4a0' : '#7ddea8';
+  const rad = simple ? Math.max(1.2, cfg.bodyR * p.s * 0.35) : Math.max(2.5, cfg.bodyR * p.s * 0.55);
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, rad, 0, Math.PI * 2);
+  ctx.fill();
+  if (!simple) {
+    const hf = Math.sin(s.heading), hz = Math.cos(s.heading);
+    const tip = project(s.x + hf * 0.7, 0.1, s.z + hz * 0.7);
+    if (tip) {
+      ctx.strokeStyle = 'rgba(255,255,255,.85)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(tip.x, tip.y);
+      ctx.stroke();
+    }
+  }
+}
+
+function drawTargets() {
+  if (!cfg.showTargets) return;
+  for (const s of soldiers) {
+    if (s.drill === PHASE.MUSTER || s.beliefSi < 0) continue;
+    const p = project(s.targetX, 0.05, s.targetZ);
+    const m = project(s.x, 0.1, s.z);
+    if (!p || !m) continue;
+    ctx.save();
+    ctx.globalAlpha = 0.45;
+    ctx.fillStyle = '#8fd0ff';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(143,208,255,.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(m.x, m.y);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function render() {
+  updateCamera();
+  ctx.fillStyle = '#12141a';
+  ctx.fillRect(0, 0, innerWidth, innerHeight);
+  if (soldiers.length < 250) {
+    const g = ctx.createLinearGradient(0, 0, 0, innerHeight * 0.5);
+    g.addColorStop(0, '#1a2030');
+    g.addColorStop(1, '#12141a');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, innerWidth, innerHeight * 0.55);
+    drawGround();
+  }
+  if (cfg.showTargets && soldiers.length < 200) drawTargets();
+  const simple = soldiers.length > 180;
+  // Depth sort only when needed (small N); large N: unsorted draw is fine for discs
+  if (soldiers.length < 220) {
+    const order = [];
+    for (let i = 0; i < soldiers.length; i++) {
+      const s = soldiers[i];
+      const p = project(s.x, 0, s.z);
+      if (p) order.push({ s, p });
+    }
+    order.sort((a, b) => b.p.z - a.p.z);
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    for (let i = 0; i < order.length; i++) drawSoldier(order[i].s, simple);
+    ctx.restore();
+  } else {
+    ctx.save();
+    ctx.globalAlpha = 0.88;
+    for (let i = 0; i < soldiers.length; i++) drawSoldier(soldiers[i], true);
+    ctx.restore();
+  }
+}
+
+function updateHud() {
+  const n = soldiers.length || 1;
+  let spSum = 0, near = 0, hold = 0;
+  let nMuster = 0, nForm = 0, nDress = 0;
+  const arriveR = cfg.spacing * MIND.arrive;
+  for (const s of soldiers) {
+    spSum += s.speed;
+    if (s.drill !== PHASE.MUSTER && s.slotDist < arriveR * 1.2) near++;
+    if (s.holding) hold++;
+    if (s.drill === PHASE.MUSTER) nMuster++;
+    else if (s.drill === PHASE.FORM) nForm++;
+    else nDress++;
+  }
+  document.getElementById('shape').textContent = cfg.shape;
+  const faceEl = document.getElementById('faceLab');
+  if (faceEl) {
+    let deg = Math.round(cfg.unitFacing * 180 / Math.PI);
+    while (deg < 0) deg += 360;
+    while (deg >= 360) deg -= 360;
+    faceEl.textContent = deg + '°';
+  }
+  document.getElementById('spd').textContent = (spSum / n).toFixed(2);
+  document.getElementById('near').textContent = Math.round(100 * near / n) + '%';
+  document.getElementById('hold').textContent = Math.round(100 * hold / n) + '%';
+  document.getElementById('nMuster').textContent = nMuster;
+  document.getElementById('nForm').textContent = nForm;
+  document.getElementById('nDress').textContent = nDress;
+  const msEl = document.getElementById('ms');
+  if (msEl) msEl.textContent = _frameMs.toFixed(1);
+}
+
+// ——— Loop ———
+function step(dt) {
+  updateMinds(dt);
+  // spatial already built in minds; refresh lightly for sep after no movement yet
+  for (const s of soldiers) stepSoldier(s, dt);
+  resolveCollisions();
+}
+
+let last = performance.now();
+function loop(now) {
+  const t0 = performance.now();
+  const raw = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  if (!cfg.paused) {
+    let budget = raw * cfg.timeScale;
+    time += budget;
+    const maxSub = 1 / 30;
+    // Fewer substeps at large N (stability still ok with hard discs)
+    const maxSteps = soldiers.length > 500 ? 4 : (soldiers.length > 200 ? 6 : 8);
+    let steps = 0;
+    while (budget > 1e-6 && steps < maxSteps) {
+      const dt = Math.min(maxSub, budget);
+      step(dt);
+      budget -= dt;
+      steps++;
+    }
+  }
+  render();
+  _frameMs = performance.now() - t0;
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+// ——— UI ———
+function setShape(shape) {
+  cfg.shape = shape;
+  document.getElementById('btnTriple').classList.toggle('active', shape === 'triple');
+  document.getElementById('btnRect').classList.toggle('active', shape === 'rect');
+  document.getElementById('btnSquare').classList.toggle('active', shape === 'square');
+  resetMinds();
+}
+
+document.getElementById('btnTriple').onclick = () => setShape('triple');
+document.getElementById('btnRect').onclick = () => setShape('rect');
+document.getElementById('btnSquare').onclick = () => setShape('square');
+document.getElementById('btnFaceLeft').onclick = () => issueFaceOrder(-Math.PI / 2);
+document.getElementById('btnFaceRight').onclick = () => issueFaceOrder(Math.PI / 2);
+document.getElementById('btnAboutFace').onclick = () => issueFaceOrder(Math.PI);
+document.getElementById('btnScatter').onclick = () => { spawnField(); resetMinds(); };
+document.getElementById('btnPause').onclick = () => {
+  cfg.paused = !cfg.paused;
+  document.getElementById('btnPause').textContent = cfg.paused ? 'Resume' : 'Pause';
+};
+document.getElementById('count').oninput = e => {
+  cfg.count = Number(e.target.value);
+  document.getElementById('countOut').textContent = String(cfg.count);
+  spawnField(); resetMinds();
+};
+document.getElementById('spacing').oninput = e => {
+  cfg.spacing = Number(e.target.value);
+  document.getElementById('spOut').textContent = cfg.spacing.toFixed(2);
+  resetMinds();
+};
+document.getElementById('showTargets').onchange = e => { cfg.showTargets = e.target.checked; };
+document.getElementById('tempo').oninput = e => {
+  cfg.timeScale = Number(e.target.value);
+  document.getElementById('tempoOut').textContent = cfg.timeScale.toFixed(2).replace(/\.?0+$/, '') + '×';
+};
+
+addEventListener('keydown', e => {
+  if (e.key === '1') setShape('triple');
+  if (e.key === '2') setShape('rect');
+  if (e.key === '3') setShape('square');
+  if (e.key === 'q' || e.key === 'Q') issueFaceOrder(-Math.PI / 2);
+  if (e.key === 'e' || e.key === 'E') issueFaceOrder(Math.PI / 2);
+  if (e.key === 'f' || e.key === 'F') issueFaceOrder(Math.PI);
+  if (e.key === 'r' || e.key === 'R') { spawnField(); resetMinds(); }
+  if (e.key === ' ') { e.preventDefault(); document.getElementById('btnPause').click(); }
+  if (e.key === '+' || e.key === '=') {
+    const el = document.getElementById('tempo');
+    el.value = String(Math.min(8, Number(el.value) + 0.25));
+    el.dispatchEvent(new Event('input'));
+  }
+  if (e.key === '-' || e.key === '_') {
+    const el = document.getElementById('tempo');
+    el.value = String(Math.max(0.25, Number(el.value) - 0.25));
+    el.dispatchEvent(new Event('input'));
+  }
+});
+
+// simple orbit
+let drag = null, lx = 0, ly = 0;
+canvas.addEventListener('pointerdown', e => {
+  drag = true; lx = e.clientX; ly = e.clientY;
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointerup', () => { drag = false; });
+canvas.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - lx, dy = e.clientY - ly;
+  lx = e.clientX; ly = e.clientY;
+  cam.yaw -= dx * 0.006;
+  cam.pitch = clamp(cam.pitch + dy * 0.004, 0.18, 1.35);
+});
+canvas.addEventListener('wheel', e => {
+  cam.dist = clamp(cam.dist + e.deltaY * 0.03, 16, 100);
+  e.preventDefault();
+}, { passive: false });
+
+// boot
+spawnField();
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

@@ -4,8 +4,8 @@ Single-file HTML prototypes (and a few supporting scripts) exploring **Roman-sty
 
 **How to run:** open any `.html` file in a browser (Chrome/Edge/Firefox). No server required unless a file loads external assets.
 
-**Current recommended build:** [`soldier_ABM_v04.html`](./soldier_ABM_v04.html)  
-(Clean form-up lab — best-so-far. Checkpoint = copy + increment: `v00` → `v01` → …)
+**Current recommended build / solid checkpoint:** [`soldier_ABM_v07.html`](./soldier_ABM_v07.html)  
+(Form-up works end-to-end; face-in-place; late thrash largely solved. Next work = copy → `v08`.)
 
 ---
 
@@ -22,9 +22,12 @@ Versioning: `soldier_ABM_vNN.html` with **NN = 00, 01, 02, …**
 | `soldier_ABM_v01.html` | Local “don’t all mob one seat” + spatial queries |
 | `soldier_ABM_v02.html` | Scale: O(1) seats, candidate rings, dress fast-path |
 | `soldier_ABM_v03.html` | Near-rank picks (not far exile) + collision slide |
-| `soldier_ABM_v04.html` | **tip** — occupancy perception; N≤300; cascade free nearest |
+| `soldier_ABM_v04.html` | **Great baseline** — occupancy perception; cascade free nearest; plant/micro-center |
+| `soldier_ABM_v05.html` | Face orders + aggressive twirl gates — **form-up regressed; skip** |
+| `soldier_ABM_v06.html` | Pure v04 packing + FACE L/R / ABOUT only (`formFacing` vs `unitFacing`) |
+| `soldier_ABM_v07.html` | **Solid checkpoint** — v06 + seat-heading / FOV / stuck-wing / sticky commit / plant protect |
 
-**Deep design notes for this lineage:** [soldier_ABM form-up lab (v04)](#soldier_abm-form-up-lab-v04--what-works-and-why) below.
+**Deep design notes:** [v04 core](#soldier_abm-form-up-lab-v04--what-works-and-why) · [learnings since v04 → v07](#learnings-since-v04--v07-checkpoint)
 
 ### Self-assembling form-up series (legacy main line)
 
@@ -173,21 +176,101 @@ Still not full infantry pathfinding — enough that cross-traffic doesn’t free
 
 Logic and formation quality stay; we only avoid O(N² × slots) thrash.
 
-### Version arc (what each step taught)
+### Version arc through v04
 
 | Ver | Lesson |
 |-----|--------|
-| **v00** | Phases + sticky private seats beat pure force soup; form-up can look intentional |
-| **v01** | Uncontested greed → mob one hole; need *local* yield without a global auction |
+| **v00** | Phases + sticky private seats beat pure force soup |
+| **v01** | Uncontested greed → mob one hole; local yield, not auction |
 | **v02** | Same rules, cheap structure → higher N playable |
-| **v03** | “Not closest ⇒ go far” overshoots; prefer **k-th nearest free**, stay local; slide collisions; don’t muster for walking across the block |
-| **v04** | **Perception of occupancy** is the real plant/share bug; cascade free nearest + closer-wins → men plant and micro-dress dead center |
+| **v03** | “Not closest ⇒ go far” overshoots; k-th nearest free; slide collisions |
+| **v04** | **Occupancy perception** + cascade free nearest → plant + micro-center |
 
-### Controls (v04)
+---
+
+## Learnings since v04 → v07 checkpoint
+
+Compressed so we don’t re-break a working form-up.
+
+### What v04 already nailed
+
+- Private seat belief + **closer-wins occupancy**  
+- Free cascade (1st free, 2nd free, …)  
+- Muster → form → dress plant  
+- Dress micro-center; no global auction  
+
+### v05 — what *not* to do (form-up regression)
+
+Tried to kill residual twirl by hard **relocate vs plant face gates** (travel only if far from seat; near post always unit-face / weak move).
+
+**Result:** last men **stopped short of seats** or stalled — “believed spot correct, body not walking.”  
+
+**Lesson:** form-up locomotion was fine enough; **don’t strangle approach** to fix heading. Ship face orders separately from packing.
+
+### v06 — face-in-place done right
+
+**Stationary facing** (not reform). Keep **v04 packing 100%**; only add face.
+
+| Command | Keys | Latin (UI title) |
+|---------|------|------------------|
+| FACE LEFT | `Q` | Ad scutum, clina |
+| FACE RIGHT | `E` | Ad gladium, clina |
+| ABOUT FACE | `F` | Transforma |
+
+Critical split:
+
+| Concept | Role | FACE changes it? |
+|---------|------|------------------|
+| **`formFacing`** | Footprint / ranks-files in world | **No** |
+| **`unitFacing`** | Where men look / dress front | **Yes** |
+
+If FACE rotated a single `facing` used by the lattice, seats would **teleport** (looks like reform/explosion).  
+Short `faceOrderT` = pivot in place; then full v04 walk logic resumes.
+
+### Late-form problems after v04 (symptoms → causes → fixes in v06/v07)
+
+| Symptom | Cause | Fix (version) |
+|---------|--------|----------------|
+| Last men **spin** with correct target | `travelHeading = atan2(desire)` includes sep/jam noise → thrash + align-gate crawl | Face **seat** (`gx,gz`), not desire (`dx,dz`) — **v07** |
+| Stall short of seat | `onPost` true when only **locked** (outside arriveR) → weak pull + `needMove=false` | On-post freeze only at **arriveR** — **v07** |
+| Magnetic cup / only find free after wandering | Candidate spiral fills **nearest N** seats (dense core); free **edge** seats never listed | `candMax = nSlots`, `candR ≥ formHalf` — **v06/v07** |
+| Kid thrash: run one way, abandon, run other | `stuckFormT` / claimTimeout / wing pick while **still closing** | Stuck/timeout only if **!closing**; claim timeout → nearest free, not wing every time — **v07** |
+| Center reshuffle; knock green men off | Passers flagged `takenHard`; collisions shove DRESS equally | `takenHard` only **same-seat claim** + closer; planted **barely move**, movers peel — **v07** |
+| Dual “best for unit” always-on score | Edge/gap weights dominated early FORM → **dozens clump center** | **Reverted.** Unit priority only as **stuck wing escape**, not continuous score — **v07** |
+
+### v07 architecture (what “working” means now)
+
+```
+MUSTER → FORM (nearest free cascade + sticky + occupy)
+              ↓ only if long NO-PROGRESS stuck
+         pickWingFree (free seat far from planted mass COM)
+              ↓ plant
+         DRESS (unit face, micro-center, hard to knock off)
+```
+
+Plus face orders: `unitFacing` only; seats fixed.
+
+**Default pick stays selfish nearest free** (works).  
+**Wing escape** is the adult “middle is full, go to the open end” — but only when genuinely stuck, not every few seconds.
+
+### Hard lessons (compression)
+
+1. **Perception before personality** — dancing/sharing was sensors, not “dumb AI.”  
+2. **Don’t mix face polish with packing** — v05 form regression.  
+3. **Split formFacing / unitFacing** — required for ABOUT FACE without reform.  
+4. **FOV of the lattice ≠ body senseR** — empty wing seats must be *listable* or seekers never choose them.  
+5. **Travel heading = seat, not force soup** — kills last-man spin.  
+6. **Abandon only when not closing** — timeouts while walking a good seat = kid thrash.  
+7. **Protect the line** — planted DRESS is sacred; seekers bounce.  
+8. **Unit integrity ≠ continuous dual score** — continuous “best for unit” clumped the mass; use **conditional strategy** (stuck → wing) instead.  
+9. **One change at a time when debugging late form** — multi-knob rewrites hid the wins.
+
+### Controls (v07)
 
 | Input | Action |
 |-------|--------|
 | `1` / `2` / `3` | Triple / rect / square |
+| `Q` / `E` / `F` | Face left / right / about |
 | `R` | Scatter |
 | Space | Pause |
 | `+` / `-` | Tempo |
@@ -195,24 +278,34 @@ Logic and formation quality stay; we only avoid O(N² × slots) thrash.
 | Show believed spots | Private targets |
 | Drag / wheel | Orbit / zoom |
 
-Colors: **purple** muster · **blue** form · **green** dress/hold. HUD: phase counts, near-post %, frame ms.
+Colors: **purple** muster · **blue** form · **green** dress/hold. HUD: phase counts, face°, near-post %, frame ms.
 
 ### What *not* to “fix” next (unless intentional)
 
-- Reintroducing a global seat auction or omniscient controller.  
-- Making STEADY / HUD lie with loose thresholds (legacy series pain).  
-- Face-travel while micro-dressing (spin).  
-- Far-field score exile as a substitute for local free cascade.  
-- Expanding N past ~300 in this lab without a new scale plan (LOD/workers).
+- Global seat auction / omniscient controller.  
+- Continuous dual “best for unit” scoring as default pick (failed clump).  
+- Aggressive relocate-face gates that freeze approach (v05).  
+- Face-travel from residual force near post.  
+- Wing re-pick while still closing on a good seat.  
+- Knocking DRESS men off for soft contact.  
+- Expanding N past ~300 without a scale plan.
 
-### Open / 1% remaining (honest)
+### Open / remaining (honest)
 
-Not claiming perfection. Possible next *small* probes (not redesigns):
+v07 is a **working checkpoint**, not perfection:
 
-- Edge cases at N≈300 under max tempo.  
-- Shape switch mid-dress (rect→square) with honest re-form.  
-- Optional: denser “dress right / cover front” *after* plant (relational polish on top of seat magnet).  
-- Later: re-embed multi-century / centurion as *physical* agents, not seat dispatchers.
+- Rare late edge cases at high N / max tempo.  
+- Shape switch mid-dress (rect→square).  
+- Optional post-plant dress-right / cover (relational polish).  
+- Centurion as **physical** agent (orders, not seat dispatcher).  
+- Multi-century re-embed later.
+
+### Bottom line (v07)
+
+> **v04 proved packing can look human.**  
+> **v06 proved face orders without destroying packing.**  
+> **v07 proved late thrash is mostly bad heading, premature abandon, FOV, and soft plants — not a need to redesign the whole ABM.**  
+> **Keep nearest-free + occupancy; escape the cup only when stuck; never teleport seats on ABOUT FACE.**
 
 ### Bottom line (capture this)
 
