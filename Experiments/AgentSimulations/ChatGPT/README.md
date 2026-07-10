@@ -4,8 +4,8 @@ Single-file HTML prototypes (and a few supporting scripts) exploring **Roman-sty
 
 **How to run:** open any `.html` file in a browser (Chrome/Edge/Firefox). No server required unless a file loads external assets.
 
-**Current recommended build / solid checkpoint:** [`soldier_ABM_v07.html`](./soldier_ABM_v07.html)  
-(Form-up works end-to-end; face-in-place; late thrash largely solved. Next work = copy → `v08`.)
+**Solid checkpoint (v07):** [`soldier_ABM_v07.html`](./soldier_ABM_v07.html)  
+Form-up plants, face-in-place works, late thrash/spin largely solved. **Do not edit v07** — next work = copy → `soldier_ABM_v08.html`.
 
 ---
 
@@ -54,8 +54,11 @@ These are exploratory battle or command demos—not the main form-up lineage.
 
 | File / folder | Role |
 |---------------|------|
-| `telemetry_turn_diag.py` | Headless Python stress of FSM + residual desire (diagnosed on-post spin) |
-| `telemetry_turn_out/` | CSV/JSON outputs from that diagnostic |
+| `sim_formup_v07.py` | Headless form-up stress (pack/plant metrics for v07 rules) |
+| `telemetry_turn_diag.py` | Legacy: FSM + residual desire (on-post spin) |
+| `telemetry_hallway_diag.py` / `telemetry_yield_diag.py` | Traffic / yield experiments |
+| `diag_traffic_thrash_v11.py` | Thrash / traffic probe |
+| `telemetry_turn_out/` | CSV/JSON outputs from turn diagnostics |
 
 ---
 
@@ -190,80 +193,86 @@ Logic and formation quality stay; we only avoid O(N² × slots) thrash.
 
 ## Learnings since v04 → v07 checkpoint
 
-Compressed so we don’t re-break a working form-up.
+**Frozen with v07.** Form-up gets into place; spinning and late thrash are finally under control. Compress everything we re-learned so the next edit doesn’t undo it.
 
-### What v04 already nailed
+### Arc in one line
 
-- Private seat belief + **closer-wins occupancy**  
-- Free cascade (1st free, 2nd free, …)  
-- Muster → form → dress plant  
-- Dress micro-center; no global auction  
+| Ver | What it is |
+|-----|------------|
+| **v04** | Last *great packing* baseline — occupy + free cascade + plant |
+| **v05** | **Skip** — face/twirl gates that strangled approach |
+| **v06** | v04 packing + face-in-place only (`formFacing` vs `unitFacing`) |
+| **v07** | **Checkpoint** — fixes late spin, FOV cup, kid thrash, plant protect |
 
-### v05 — what *not* to do (form-up regression)
+### What v04 already nailed (do not redesign)
 
-Tried to kill residual twirl by hard **relocate vs plant face gates** (travel only if far from seat; near post always unit-face / weak move).
+- Private `beliefSi` + **closer-wins** occupancy perception  
+- Free cascade: 1st free nearest → 2nd → … (local, not exile)  
+- Private phases: **MUSTER → FORM → DRESS**  
+- Dress micro-center; no global auction / Hungarian / omniscient controller  
 
-**Result:** last men **stopped short of seats** or stalled — “believed spot correct, body not walking.”  
+### v05 — what *not* to do
 
-**Lesson:** form-up locomotion was fine enough; **don’t strangle approach** to fix heading. Ship face orders separately from packing.
+Tried to kill residual twirl with hard **relocate vs plant face gates** (travel only if far; near post always unit-face / weak move).
+
+**Result:** last men **stopped short** — believed seat correct, body not walking.  
+
+**Lesson:** don’t strangle packing locomotion to polish heading. Ship face orders **separately**.
 
 ### v06 — face-in-place done right
 
-**Stationary facing** (not reform). Keep **v04 packing 100%**; only add face.
+**Stationary facing, not reform.** Keep **v04 packing 100%**; only add face.
 
-| Command | Keys | Latin (UI title) |
-|---------|------|------------------|
+| Command | Keys | Latin (UI) |
+|---------|------|------------|
 | FACE LEFT | `Q` | Ad scutum, clina |
 | FACE RIGHT | `E` | Ad gladium, clina |
 | ABOUT FACE | `F` | Transforma |
 
-Critical split:
-
 | Concept | Role | FACE changes it? |
 |---------|------|------------------|
-| **`formFacing`** | Footprint / ranks-files in world | **No** |
+| **`formFacing`** | Lattice footprint / ranks-files in world | **No** |
 | **`unitFacing`** | Where men look / dress front | **Yes** |
 
-If FACE rotated a single `facing` used by the lattice, seats would **teleport** (looks like reform/explosion).  
-Short `faceOrderT` = pivot in place; then full v04 walk logic resumes.
+One shared `facing` for both → ABOUT FACE **teleports seats** (looks like explosion/reform).  
+Short `faceOrderT` = pivot in place; then walk logic resumes.
 
-### Late-form problems after v04 (symptoms → causes → fixes in v06/v07)
+### Late-form: symptom → cause → fix
 
-| Symptom | Cause | Fix (version) |
-|---------|--------|----------------|
-| Last men **spin** with correct target | `travelHeading = atan2(desire)` includes sep/jam noise → thrash + align-gate crawl | Face **seat** (`gx,gz`), not desire (`dx,dz`) — **v07** |
-| Stall short of seat | `onPost` true when only **locked** (outside arriveR) → weak pull + `needMove=false` | On-post freeze only at **arriveR** — **v07** |
-| Magnetic cup / only find free after wandering | Candidate spiral fills **nearest N** seats (dense core); free **edge** seats never listed | `candMax = nSlots`, `candR ≥ formHalf` — **v06/v07** |
-| Kid thrash: run one way, abandon, run other | `stuckFormT` / claimTimeout / wing pick while **still closing** | Stuck/timeout only if **!closing**; claim timeout → nearest free, not wing every time — **v07** |
-| Center reshuffle; knock green men off | Passers flagged `takenHard`; collisions shove DRESS equally | `takenHard` only **same-seat claim** + closer; planted **barely move**, movers peel — **v07** |
-| Dual “best for unit” always-on score | Edge/gap weights dominated early FORM → **dozens clump center** | **Reverted.** Unit priority only as **stuck wing escape**, not continuous score — **v07** |
+| Symptom | Cause | Fix |
+|---------|--------|-----|
+| Last men **spin** on correct target | `travelHeading = atan2(desire)` includes sep/jam noise | Face **seat** `(gx,gz)`, not desire `(dx,dz)` |
+| Stall short of seat | `onPost` when only **locked** (outside arriveR) → freeze pull | Freeze only inside **arriveR** |
+| Magnetic center cup | Candidate spiral capped at nearest N; free **edge** seats never listed | `candMax = nSlots`, `candR ≥ formHalf` |
+| Kid thrash (run → abandon → other way) | `stuckFormT` / claimTimeout / wing while **still closing** | Abandon only if **!closing**; claim timeout → nearest free |
+| Center reshuffle; knock greens off | Passers flagged hard-taken; DRESS shoved like movers | `takenHard` = same-seat claim + closer; plant **immovable**, movers peel |
+| Dual “best for unit” always-on | Edge/gap weights dominate early FORM → **clump center** | **Reverted.** Unit priority only as **stuck → wing escape** |
 
-### v07 architecture (what “working” means now)
+### v07 architecture (what “working” means)
 
 ```
 MUSTER → FORM (nearest free cascade + sticky + occupy)
               ↓ only if long NO-PROGRESS stuck
          pickWingFree (free seat far from planted mass COM)
               ↓ plant
-         DRESS (unit face, micro-center, hard to knock off)
+         DRESS (unitFacing, micro-center, hard to knock off)
 ```
 
-Plus face orders: `unitFacing` only; seats fixed.
+- Face orders touch **`unitFacing` only**; seats stay put.  
+- **Default pick = selfish nearest free** (it works).  
+- **Wing escape** = adult “middle full, go to the open end” — only when genuinely stuck, not every few seconds.
 
-**Default pick stays selfish nearest free** (works).  
-**Wing escape** is the adult “middle is full, go to the open end” — but only when genuinely stuck, not every few seconds.
+### Nine hard lessons (memorize)
 
-### Hard lessons (compression)
-
-1. **Perception before personality** — dancing/sharing was sensors, not “dumb AI.”  
+1. **Perception before personality** — dance/share was bad sensors, not dumb AI.  
 2. **Don’t mix face polish with packing** — v05 form regression.  
-3. **Split formFacing / unitFacing** — required for ABOUT FACE without reform.  
-4. **FOV of the lattice ≠ body senseR** — empty wing seats must be *listable* or seekers never choose them.  
+3. **Split `formFacing` / `unitFacing`** — ABOUT FACE without reform.  
+4. **Lattice FOV ≠ body senseR** — empty wing seats must be *listable*.  
 5. **Travel heading = seat, not force soup** — kills last-man spin.  
-6. **Abandon only when not closing** — timeouts while walking a good seat = kid thrash.  
+6. **Abandon only when not closing** — timeout while walking a good seat = kid thrash.  
 7. **Protect the line** — planted DRESS is sacred; seekers bounce.  
-8. **Unit integrity ≠ continuous dual score** — continuous “best for unit” clumped the mass; use **conditional strategy** (stuck → wing) instead.  
-9. **One change at a time when debugging late form** — multi-knob rewrites hid the wins.
+8. **Unit integrity ≠ continuous dual score** — always-on “best for unit” clumped the mass; use **conditional** stuck→wing.  
+9. **One change at a time** on late form — multi-knob rewrites hid the wins.
 
 ### Controls (v07)
 
@@ -280,42 +289,35 @@ Plus face orders: `unitFacing` only; seats fixed.
 
 Colors: **purple** muster · **blue** form · **green** dress/hold. HUD: phase counts, face°, near-post %, frame ms.
 
-### What *not* to “fix” next (unless intentional)
+### Do not “fix” next (unless intentional redesign)
 
-- Global seat auction / omniscient controller.  
-- Continuous dual “best for unit” scoring as default pick (failed clump).  
-- Aggressive relocate-face gates that freeze approach (v05).  
-- Face-travel from residual force near post.  
-- Wing re-pick while still closing on a good seat.  
-- Knocking DRESS men off for soft contact.  
-- Expanding N past ~300 without a scale plan.
+- Global seat auction / omniscient formation controller  
+- Continuous dual “best for unit” as default pick  
+- Aggressive relocate-face gates that freeze approach (v05)  
+- Face-travel from residual force near post  
+- Wing re-pick while still closing on a good seat  
+- Soft-contact knock-offs of DRESS men  
+- N past ~300 without a scale plan  
 
-### Open / remaining (honest)
+### Still open (honest)
 
-v07 is a **working checkpoint**, not perfection:
+v07 is **working**, not perfect:
 
-- Rare late edge cases at high N / max tempo.  
-- Shape switch mid-dress (rect→square).  
-- Optional post-plant dress-right / cover (relational polish).  
-- Centurion as **physical** agent (orders, not seat dispatcher).  
-- Multi-century re-embed later.
+- Rare late edge cases at high N / max tempo  
+- Shape switch mid-dress (rect→square)  
+- Optional post-plant dress-right / cover (relational polish)  
+- Centurion as **physical** agent (orders, not seat dispatcher)  
+- Multi-century re-embed later  
 
-### Bottom line (v07)
+### Bottom lines
 
-> **v04 proved packing can look human.**  
-> **v06 proved face orders without destroying packing.**  
-> **v07 proved late thrash is mostly bad heading, premature abandon, FOV, and soft plants — not a need to redesign the whole ABM.**  
-> **Keep nearest-free + occupancy; escape the cup only when stuck; never teleport seats on ABOUT FACE.**
+**v04 packing:**
 
-### Bottom line (capture this)
+> Don’t invent the formation from flocking. Give doctrine (shape + spacing + site). Private seat belief + closer-wins occupancy + cascade nearest free. Muster → form → dress plant.
 
-> **Don’t invent the formation from flocking.**  
-> **Give doctrine (shape + spacing + site).**  
-> **Let each man own a private seat belief.**  
-> **Let him see who is already using a post (closer wins).**  
-> **Cascade nearest free seats — not furthest, not auction.**  
-> **Muster, then form, then dress with unit face and plant.**  
-> **v04 works because perception finally matches the packing problem the men are solving.**
+**v07 checkpoint:**
+
+> v04 proved packing can look human. v06 proved face without destroying packing. v07 proved late thrash is mostly bad heading, premature abandon, FOV, and soft plants — **not** a need to redesign the ABM. Keep nearest-free + occupancy; wing only when stuck; never teleport seats on ABOUT FACE.
 
 ---
 
@@ -552,10 +554,10 @@ Internal references in this folder: `rtw_autonomous_drills_v2.html`, `self_assem
 
 ## Suggested reading order
 
-1. Open **v9** (or v8) — full story in one file.  
-2. Optionally open **v1** — pure local line, no seats.  
-3. Skim **v4** vs **v5** — headed motion with bad vs good desire.  
-4. **v7** vs early failed facing patches — seats + why plant gates matter.  
+1. Open **`soldier_ABM_v07.html`** — current solid form-up lab (checkpoint).  
+2. Skim **[learnings since v04 → v07](#learnings-since-v04--v07-checkpoint)** — what broke and what fixed it.  
+3. Optionally open **`soldier_ABM_v04.html`** — pure packing baseline without face polish.  
+4. Legacy stack: **v9** full story → **v1** pure local line → **v4** vs **v5** desire bug → **v7** mental seats. 
 
 ---
 
