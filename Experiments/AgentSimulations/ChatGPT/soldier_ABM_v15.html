@@ -1,0 +1,4241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>soldier_ABM_v15 — continuous rank closure</title>
+<style>
+  :root { color-scheme: dark; --bg:#12141a; --panel:rgba(14,16,22,.9); --line:rgba(255,255,255,.12); --text:#f0ebe3; --muted:#a8a296; --gold:#e9bf62; --blue:#8fd0ff; }
+  html, body { margin:0; width:100%; height:100%; overflow:hidden; background:var(--bg); color:var(--text); font:13px/1.35 system-ui, sans-serif; }
+  canvas { display:block; width:100vw; height:100vh; cursor:grab; touch-action:none; }
+  #hud { position:fixed; top:12px; left:12px; width:390px; max-width:calc(100vw - 24px); max-height:calc(100vh - 24px); overflow:auto; border:1px solid var(--line); border-radius:12px; background:var(--panel); padding:12px 14px; backdrop-filter:blur(8px); }
+  h1 { margin:0 0 4px; font-size:14px; font-weight:700; }
+  p { margin:0 0 10px; color:var(--muted); font-size:11px; }
+  .row { display:flex; gap:6px; flex-wrap:wrap; margin:6px 0; }
+  button { color:var(--text); background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.16); border-radius:8px; padding:7px 10px; font:inherit; font-size:12px; cursor:pointer; }
+  button:hover { background:rgba(255,255,255,.14); }
+  button.active { border-color:rgba(143,208,255,.6); background:rgba(143,208,255,.14); }
+  button.primary { border-color:rgba(233,191,98,.55); background:rgba(233,191,98,.16); }
+  label { color:var(--muted); font-size:11px; display:flex; align-items:center; gap:6px; }
+  input[type=range] { width:120px; }
+  .stat { margin-top:8px; font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .stat b { color:var(--gold); font-weight:650; }
+  kbd { background:rgba(255,255,255,.1); padding:1px 5px; border-radius:4px; font-size:10px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <h1>soldier_ABM_v15</h1>
+  <p>Local claims, audible drill orders, public social cues, and local motion. No central post assignment or shared occupancy map.</p>
+  <div class="row">
+    <button id="btnTriple" class="active">TRIPLE</button>
+    <button id="btnRect">RECT</button>
+    <button id="btnSquare">SQUARE</button>
+  </div>
+  <div class="row">
+    <button id="btnFaceLeft" title="Ad scutum, clina">FACE LEFT</button>
+    <button id="btnFaceRight" title="Ad gladium, clina">FACE RIGHT</button>
+    <button id="btnAboutFace" title="Transforma">ABOUT FACE</button>
+  </div>
+  <div class="row">
+    <button id="btnAdvance">ADVANCE 8m</button>
+    <button id="btnRetire">RETIRE 6m</button>
+    <button id="btnTurnLeft">TURN L</button>
+    <button id="btnTurnRight">TURN R</button>
+  </div>
+  <div class="row">
+    <button id="btnWheelLeft">WHEEL L 45°</button>
+    <button id="btnWheelRight">WHEEL R 45°</button>
+    <button id="btnTestudo">TESTUDO</button>
+  </div>
+  <div class="row">
+    <label title="Experimental per-file relief model; continuous individual rotation is not directly attested"><input id="fatigueFight" type="checkbox"> fighting fatigue (modeled relief)</label>
+    <button id="btnCasualty" title="Remove one planted front-rank man">FRONT CASUALTY</button>
+    <button id="btnAttrition" title="Distributed test event: remove one quarter of the present men">25% CASUALTIES</button>
+  </div>
+  <div class="row">
+    <button id="btnScatter" class="primary">Scatter</button>
+    <button id="btnPause">Pause</button>
+  </div>
+  <div class="row">
+    <label>N <input id="count" type="range" min="12" max="300" step="4" value="36"><span id="countOut">36</span></label>
+  </div>
+  <div class="row">
+    <label>spacing <input id="spacing" type="range" min="1.0" max="2.4" step="0.05" value="1.55"><span id="spOut">1.55</span></label>
+  </div>
+  <div class="row">
+    <label>tempo <input id="tempo" type="range" min="0.25" max="8" step="0.25" value="1"><span id="tempoOut">1×</span></label>
+  </div>
+  <div class="row">
+    <label><input id="showTargets" type="checkbox"> believed spots</label>
+  </div>
+  <div class="stat">
+    shape <b id="shape">triple</b> · face <b id="faceLab">0°</b> · speed <b id="spd">—</b><br>
+    muster <b id="nMuster">—</b> · form <b id="nForm">—</b> · dress <b id="nDress">—</b><br>
+    march <b id="nMarch">—</b> · fight <b id="nFight">—</b> · testudo <b id="nTestudo">—</b> · flee <b id="nFlee">—</b><br>
+    relief cycles <b id="cycles">0</b> · active <b id="cycling">0</b> · avg <b id="cycleAvg">—</b>s<br>
+    near post <b id="near">—</b> · holding <b id="hold">—</b> · ms <b id="ms">—</b><br>
+    <span style="opacity:.85">colors: <span style="color:#c48cff">muster</span> · <span style="color:#8fd0ff">form</span> · <span style="color:#5ad4a0">dress</span> · <span style="color:#f2c46d">march</span> · <span style="color:#ff806f">fight</span> · <span style="color:#a7b7c8">testudo</span></span><br>
+    <kbd>A</kbd>/<kbd>B</kbd> advance/retire · <kbd>Q</kbd>/<kbd>E</kbd>/<kbd>F</kbd> face · <kbd>R</kbd> scatter · <kbd>Space</kbd> pause
+  </div>
+</div>
+<script>
+(() => {
+'use strict';
+
+// ——— Canvas / camera ———
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha: false });
+const DPR = Math.min(2, devicePixelRatio || 1);
+let W = 1, H = 1;
+function resize() {
+  W = Math.floor(innerWidth * DPR);
+  H = Math.floor(innerHeight * DPR);
+  canvas.width = W; canvas.height = H;
+  canvas.style.width = innerWidth + 'px';
+  canvas.style.height = innerHeight + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+// Orbit camera: eye ABOVE ground looking down at target (not under the plane).
+const cam = {
+  target: { x: 0, y: 0, z: 0 },
+  dist: 48,
+  yaw: -0.65,
+  pitch: 0.62, // elevation angle; ~0 = horizon, ~π/2 = straight down
+  eye: { x: 0, y: 0, z: 0 },
+  fwd: { x: 0, y: 0, z: 1 },
+  right: { x: 1, y: 0, z: 0 },
+  up: { x: 0, y: 1, z: 0 },
+  f: 900
+};
+function vsub(a, b) { return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z }; }
+function vdot(a, b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+function vcross(a, b) {
+  return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x };
+}
+function vnorm(v) {
+  const m = Math.hypot(v.x, v.y, v.z) || 1;
+  return { x: v.x / m, y: v.y / m, z: v.z / m };
+}
+function updateCamera() {
+  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  // Eye sits above the field and looks at target on the ground plane.
+  cam.eye.x = cam.target.x + Math.sin(cam.yaw) * cp * cam.dist;
+  cam.eye.z = cam.target.z + Math.cos(cam.yaw) * cp * cam.dist;
+  cam.eye.y = cam.target.y + sp * cam.dist;
+  cam.fwd = vnorm(vsub(cam.target, cam.eye));
+  cam.right = vnorm(vcross(cam.fwd, { x: 0, y: 1, z: 0 }));
+  cam.up = vnorm(vcross(cam.right, cam.fwd));
+  cam.f = Math.min(innerWidth, innerHeight) * 0.95;
+}
+// Call updateCamera() once per frame before draw — not per project().
+function project(x, y, z) {
+  const q = { x: x - cam.eye.x, y: y - cam.eye.y, z: z - cam.eye.z };
+  const zc = vdot(q, cam.fwd);
+  if (zc < 0.25) return null;
+  const scale = cam.f / zc;
+  return {
+    x: innerWidth * 0.5 + vdot(q, cam.right) * scale,
+    y: innerHeight * 0.52 - vdot(q, cam.up) * scale,
+    s: scale,
+    z: zc
+  };
+}
+
+// ——— Config (MVP only) ———
+const cfg = {
+  shape: 'triple',   // triple | rect | square
+  count: 36,
+  spacing: 1.55,
+  bodyR: 0.42,
+  // formFacing = ranks/files footprint. unitFacing = attention (FACE L/R/ABOUT).
+  formFacing: 0,
+  unitFacing: 0,
+  orderAnchorX: 0,
+  orderAnchorZ: 0,
+  fatigueFight: false,
+  senseR: 16,
+  press: 6.5,
+  sep: 2.8,
+  paused: false,
+  showTargets: false,
+  timeScale: 1,
+  seed: 0x00004004
+};
+
+// Formation anchor is world origin — not a person
+const ANCHOR = { x: 0, z: 0 };
+
+// Per-soldier drill phases (each man decides for himself)
+const PHASE = {
+  MUSTER: 'muster', // mass near the site
+  FORM: 'form',     // occupy ranks/files (mental seats)
+  DRESS: 'dress',   // fine place + face
+  MARCH: 'march',   // preserve a known post through a collective maneuver
+  FIGHT: 'fight',   // scaffold: engaged / holding combat frontage
+  FLEE: 'flee',     // scaffold: routing away from the threat
+  TESTUDO: 'testudo' // compact shield-roof drill with constrained reflow
+};
+const PHASE_INDEX = Object.freeze({ muster: 0, form: 1, dress: 2, march: 3, fight: 4, flee: 5, testudo: 6 });
+const PHASE_NAMES = Object.freeze(['muster', 'form', 'dress', 'march', 'fight', 'flee', 'testudo']);
+
+// Mental / loco knobs (small fixed set)
+const MIND = {
+  arrive: 0.32,      // × spacing — on post
+  lock: 0.42,
+  unlock: 1.35,      // only unlock if really shoved
+  seated: 0.48,      // body ON seat if within this × spacing (perception)
+  // Someone else is "using" a seat if within this (slightly larger than seated)
+  occupy: 0.58,      // × spacing — body near seat center counts as taken
+  // FORM stickiness — stop musical chairs
+  claimTimeout: 3.4,       // persistent no-progress triggers a salted local re-pick
+  minCommit: 1.25,         // commitment plus conflict hysteresis prevents chairs
+  stuckFormTime: 6.5,      // endgame retry after sustained no-progress
+  wingEscape: true,        // wing pick only when stuck (not every timeout)
+  switchMargin: 2.4,       // need *much* better cell to switch (×spacing)
+  rescoreEvery: 0.55,      // re-evaluate less often
+  stickBonus: 3.2,         // ×spacing added to current belief score
+  approachReserve: 1.35,   // mild: closer man approaching this cell
+  progressFrac: 0.12,      // claim timeout only if not closing on seat
+  // Cascade through nearest free seats in order (still only local candidates)
+  nearRankMax: 18,         // nearest seats tested for clear local precedence
+  // Scale: candidate ring around me
+  seekerCap: 32,
+  gestureR: 5.0,           // eye contact / pointing / body-language range
+  socialR: 7.0,            // audible/visible FSM cues: posture, grunts, motion
+  searchStart: 11.0,       // initial private seat-search radius
+  searchGrowth: 3.2,       // very wide fronts become fully searchable in ~45 s
+  noSlotGrowth: 4.0,       // extra expansion when no local choice appears viable
+  sectorPull: 0.62,        // stay in the wing entered; distance still dominates
+  crossPenalty: 8.0,       // × spacing: do not cut through the formed body
+  stationTenure: 2.2,      // brief arrival window for resolving a true duplicate
+  disputeHold: 0.65,       // persistent duplicate; ordinary contact is ignored
+  // Private phase gates
+  musterRadius: 9.0,
+  musterInner: 6.5,
+  musterFriends: 5,
+  musterFriendR: 6.5,
+  musterHold: 1.15,
+  formToDressHold: 0.65,
+  dressBreak: 2.8,         // harder to fall out of DRESS when bumped
+  formBreakPad: 10,         // + formation radius; don't muster just for crossing the block
+  thinkEvery: 0.16          // private perceptual update cadence (~6 Hz)
+};
+const LOCO = {
+  walk: 1.4,
+  run: 3.2,
+  shuffle: 0.55,
+  turn: 4.2,
+  moveCommit: 0.35,
+  faceAlign: 0.22,
+  stopSpeed: 0.06,
+  // Collision / traffic: predictive local pass + PBD hard discs
+  travelSoft: 1.22,        // slightly wider soft bubble while relocating
+  jamSlide: 1.15,          // desire-space peel when blocked
+  faceOrderHold: 0.55,     // brief in-place pivot after FACE
+  passT0: 0.55,            // short cooperative passing corridor
+  vLatDamp: 8.0,           // normal unicycle lateral kill rate
+  vLatPassDamp: 1.4,       // during pass: preserve a controlled slide
+  sideCommitT0: 0.7,       // insertion hysteresis carries the longer commitment
+  staticJamBoost: 1.35,    // peel harder when relative approach ~0
+  passStrafe: 0.55,        // intent-space right peel while passing
+  tangSlip: 0.55,          // Helbing-lite tangential slip on hard contact
+  maxPassLat: 1.35,        // cap lateral speed so no ice rink
+  avoidHorizon: 1.25,      // seconds of visible trajectory projected locally
+  avoidClear: 1.02,        // desired predicted body-center clearance
+  avoidGain: 1.9,          // reciprocal predictive steering strength
+  stationBrake: 0.9        // brake hard for a visibly stationary body ahead
+};
+
+const soldiers = [];
+let time = 0;
+let _frameMs = 0;
+
+// Reused buffers (avoid per-frame alloc thrash)
+const _nearBuf = [];
+const _candBuf = []; // slot indices
+let _spatial = null; // Map<number, soldier[]>
+let _spatialCell = 4;
+const _SPATIAL_STRIDE = 4096; // key = (ix+off)*stride + (iz+off)
+
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+let _rng = cfg.seed >>> 0;
+function reseed(seed) { _rng = (seed >>> 0) || 0x9e3779b9; }
+function random() {
+  // Mulberry32: deterministic scenarios make regressions reproducible.
+  _rng += 0x6d2b79f5;
+  let t = _rng;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+function rand(a, b) { return a + random() * (b - a); }
+function hash01(a, b, c) {
+  let x = Math.imul((a + 1) | 0, 0x9e3779b1) ^ Math.imul((b + 7) | 0, 0x85ebca6b) ^ Math.imul((c + 13) | 0, 0xc2b2ae35);
+  x ^= x >>> 16; x = Math.imul(x, 0x7feb352d); x ^= x >>> 15;
+  return (x >>> 0) / 4294967296;
+}
+function dist2sq(ax, az, bx, bz) { const dx = ax - bx, dz = az - bz; return dx * dx + dz * dz; }
+
+/** Integer-key spatial hash — faster than string keys */
+function rebuildSpatial(cellSize) {
+  _spatialCell = cellSize;
+  const map = new Map();
+  const off = 512;
+  const stride = _SPATIAL_STRIDE;
+  for (let i = 0; i < soldiers.length; i++) {
+    const s = soldiers[i];
+    const ix = (Math.floor(s.x / cellSize) + off) | 0;
+    const iz = (Math.floor(s.z / cellSize) + off) | 0;
+    const key = ix * stride + iz;
+    let bucket = map.get(key);
+    if (!bucket) { bucket = []; map.set(key, bucket); }
+    bucket.push(s);
+  }
+  _spatial = map;
+  return map;
+}
+
+/** Fill _nearBuf with soldiers within radius. Returns count. */
+function queryNear(x, z, radius, self) {
+  _nearBuf.length = 0;
+  const cs = _spatialCell;
+  const r = radius;
+  const r2 = r * r;
+  if (!_spatial) {
+    for (let i = 0; i < soldiers.length; i++) {
+      const o = soldiers[i];
+      if (o === self) continue;
+      if (dist2sq(x, z, o.x, o.z) < r2) _nearBuf.push(o);
+    }
+    return _nearBuf.length;
+  }
+  const off = 512;
+  const stride = _SPATIAL_STRIDE;
+  const i0 = Math.floor((x - r) / cs), i1 = Math.floor((x + r) / cs);
+  const z0 = Math.floor((z - r) / cs), z1 = Math.floor((z + r) / cs);
+  for (let ix = i0; ix <= i1; ix++) {
+    for (let iz = z0; iz <= z1; iz++) {
+      const bucket = _spatial.get((ix + off) * stride + (iz + off));
+      if (!bucket) continue;
+      for (let k = 0; k < bucket.length; k++) {
+        const o = bucket[k];
+        if (o === self) continue;
+        const dx = o.x - x, dz = o.z - z;
+        if (dx * dx + dz * dz < r2) _nearBuf.push(o);
+      }
+    }
+  }
+  return _nearBuf.length;
+}
+function angleDiff(a, b) {
+  let d = a - b;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+/**
+ * Footprint axes from formFacing (not unitFacing).
+ * `right` is a legacy lattice-field name for positive latitude.  With y-up
+ * and heading zero along +z, anatomical right is fwd × up = -latitude.
+ * Keeping that distinction explicit prevents UI LEFT/RIGHT from being
+ * silently mirrored by the otherwise valid camera projection.
+ */
+function facingVectors(face) {
+  const f = face != null ? face : cfg.formFacing;
+  const fwd = { x: Math.sin(f), z: Math.cos(f) };
+  const right = { x: Math.cos(f), z: -Math.sin(f) };
+  return { fwd, right };
+}
+function wrapAngle(a) {
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
+
+// ——— Doctrine: what the shape *is* (shared idea only) ———
+function formationPlan(n, shape) {
+  if (shape === 'testudo') {
+    const aspect = 1.6;
+    const cols = Math.max(3, Math.ceil(Math.sqrt(n * aspect)));
+    return { cols, rows: Math.max(1, Math.ceil(n / cols)) };
+  }
+  if (shape === 'square') {
+    const side = Math.max(1, Math.ceil(Math.sqrt(n)));
+    return { cols: side, rows: side };
+  }
+  if (shape === 'rect') {
+    const aspect = 2.4;
+    const cols = Math.max(2, Math.ceil(Math.sqrt(n * aspect)));
+    const rows = Math.max(1, Math.ceil(n / cols));
+    return { cols, rows };
+  }
+  const rows = 3;
+  const cols = Math.max(1, Math.ceil(n / rows));
+  return { cols, rows };
+}
+
+/**
+ * Full rectangular lattice indexed si = r * cols + c (O(1) world↔seat).
+ * May have ≥ n cells (empty seats OK). Ensures plan covers n men.
+ */
+function buildMentalLattice(doctrine) {
+  const n = doctrine.strength;
+  const sp = doctrine.spacing;
+  const plan = formationPlan(n, doctrine.shape);
+  let { cols, rows } = plan;
+  while (cols * rows < n) {
+    if (doctrine.shape === 'triple') cols++;
+    else if (rows <= cols) rows++;
+    else cols++;
+  }
+  plan.cols = cols; plan.rows = rows;
+  const { fwd, right } = facingVectors(doctrine.formFacing);
+  const anchorX = Number.isFinite(doctrine.anchorX) ? doctrine.anchorX : 0;
+  const anchorZ = Number.isFinite(doctrine.anchorZ) ? doctrine.anchorZ : 0;
+  const nSlots = cols * rows;
+  const slots = new Array(nSlots);
+  const wx = new Float64Array(nSlots);
+  const wz = new Float64Array(nSlots);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const si = r * cols + c;
+      const lat = (c - (cols - 1) * 0.5) * sp;
+      const dep = ((rows - 1) * 0.5 - r) * sp;
+      slots[si] = { c, r, lat, dep };
+      wx[si] = anchorX + right.x * lat + fwd.x * dep;
+      wz[si] = anchorZ + right.z * lat + fwd.z * dep;
+    }
+  }
+  return {
+    plan, slots, wx, wz, nSlots, cols, rows, sp, fwd, right, anchorX, anchorZ,
+    maxLat: Math.max(sp * 0.5, (cols - 1) * sp * 0.5)
+  };
+}
+
+function receiveDoctrine(s) {
+  // An order each man hears; this copies doctrine into his own state. It does not
+  // assign him a post or expose any other soldier's decision.
+  s.doctrine = {
+    shape: cfg.shape,
+    strength: cfg.count,
+    spacing: cfg.spacing,
+    formFacing: cfg.formFacing,
+    anchorX: cfg.orderAnchorX,
+    anchorZ: cfg.orderAnchorZ
+  };
+  s.mentalLattice = null;
+}
+function formationCoords(x, z, L) {
+  const lx = x - L.anchorX, lz = z - L.anchorZ;
+  return {
+    lat: lx * L.right.x + lz * L.right.z,
+    dep: lx * L.fwd.x + lz * L.fwd.z
+  };
+}
+function formationWorld(lat, dep, L) {
+  return {
+    x: L.anchorX + L.right.x * lat + L.fwd.x * dep,
+    z: L.anchorZ + L.right.z * lat + L.fwd.z * dep
+  };
+}
+
+function getMentalLattice(s) {
+  if (!s.mentalLattice) s.mentalLattice = buildMentalLattice(s.doctrine);
+  return s.mentalLattice;
+}
+
+/** O(1) world → seat index (full grid). */
+function worldToSlotIndex(x, z, L) {
+  const lx = x - L.anchorX, lz = z - L.anchorZ;
+  const lat = lx * L.right.x + lz * L.right.z;
+  const dep = lx * L.fwd.x + lz * L.fwd.z;
+  const c = Math.round(lat / L.sp + (L.cols - 1) * 0.5);
+  const r = Math.round((L.rows - 1) * 0.5 - dep / L.sp);
+  if (c < 0 || r < 0 || c >= L.cols || r >= L.rows) return -1;
+  return r * L.cols + c;
+}
+
+/** Nearest seat under seatedR using O(1) guess + 3×3 refine */
+function nearestSeat(x, z, L, seatedR) {
+  let si = worldToSlotIndex(x, z, L);
+  let best = -1, bestD = seatedR;
+  const check = (s) => {
+    if (s < 0 || s >= L.nSlots) return;
+    const d = Math.hypot(x - L.wx[s], z - L.wz[s]);
+    if (d <= bestD) { bestD = d; best = s; }
+  };
+  if (si >= 0) {
+    const c0 = si % L.cols, r0 = (si / L.cols) | 0;
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const c = c0 + dc, r = r0 + dr;
+        if (c < 0 || r < 0 || c >= L.cols || r >= L.rows) continue;
+        check(r * L.cols + c);
+      }
+    }
+  } else {
+    // off-grid: clamp to edge cell then 3×3
+    const { lat, dep } = formationCoords(x, z, L);
+    const c0 = clamp(Math.round(lat / L.sp + (L.cols - 1) * 0.5), 0, L.cols - 1);
+    const r0 = clamp(Math.round((L.rows - 1) * 0.5 - dep / L.sp), 0, L.rows - 1);
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const c = c0 + dc, r = r0 + dr;
+        if (c < 0 || r < 0 || c >= L.cols || r >= L.rows) continue;
+        check(r * L.cols + c);
+      }
+    }
+  }
+  return best;
+}
+
+/** Collect nearby candidate seats into _candBuf (spiral from local cell). */
+function collectCandidates(x, z, L, maxCand, radius) {
+  _candBuf.length = 0;
+  const r2 = radius * radius;
+  let c0 = worldToSlotIndex(x, z, L);
+  if (c0 < 0) {
+    const { lat, dep } = formationCoords(x, z, L);
+    const c = clamp(Math.round(lat / L.sp + (L.cols - 1) * 0.5), 0, L.cols - 1);
+    const r = clamp(Math.round((L.rows - 1) * 0.5 - dep / L.sp), 0, L.rows - 1);
+    c0 = r * L.cols + c;
+  }
+  const cc = c0 % L.cols, rr = (c0 / L.cols) | 0;
+  const push = (si) => {
+    if (si < 0 || si >= L.nSlots) return;
+    const dx = L.wx[si] - x, dz = L.wz[si] - z;
+    if (dx * dx + dz * dz <= r2) _candBuf.push(si);
+  };
+  push(c0);
+  // ring expansion until maxCand or empty rings past radius
+  const maxRing = Math.ceil(radius / L.sp) + 2;
+  for (let ring = 1; ring <= maxRing && _candBuf.length < maxCand; ring++) {
+    for (let dc = -ring; dc <= ring && _candBuf.length < maxCand; dc++) {
+      const c1 = cc + dc, r1 = rr - ring, r2b = rr + ring;
+      if (c1 >= 0 && c1 < L.cols) {
+        if (r1 >= 0 && r1 < L.rows) push(r1 * L.cols + c1);
+        if (r2b >= 0 && r2b < L.rows && r2b !== r1) push(r2b * L.cols + c1);
+      }
+    }
+    for (let dr = -ring + 1; dr <= ring - 1 && _candBuf.length < maxCand; dr++) {
+      const r1 = rr + dr, c1 = cc - ring, c2 = cc + ring;
+      if (r1 >= 0 && r1 < L.rows) {
+        if (c1 >= 0 && c1 < L.cols) push(r1 * L.cols + c1);
+        if (c2 >= 0 && c2 < L.cols && c2 !== c1) push(r1 * L.cols + c2);
+      }
+    }
+  }
+  return _candBuf.length;
+}
+
+// ——— Soldier ———
+function rollPrefs(s) {
+  s.prefEdge = rand(-1, 1);
+  s.prefSide = rand(-1, 1);
+  s.fileBias = rand(-1, 1); // small local tie-break / escape salt, never a post
+  s.prefFront = rand(-1, 1);
+  if (random() < 0.35) s.prefEdge *= 0.35;
+  if (random() < 0.35) s.prefFront *= 0.35;
+}
+
+function makeSoldier(id, x, z) {
+  const s = {
+    id, x, z, vx: 0, vz: 0, speed: 0,
+    heading: rand(-Math.PI, Math.PI),
+    // private drill phase
+    drill: PHASE.MUSTER,
+    publicState: PHASE.MUSTER,
+    nextPublicState: PHASE.MUSTER,
+    neighborStates: new Int16Array(7),
+    dominantNeighborState: PHASE.MUSTER,
+    drillTime: 0,
+    nearPostTime: 0,
+    musterReady: rand(0.0, 0.55), // personal stagger so not everyone forms same frame
+    // private mind
+    doctrine: null,
+    mentalLattice: null,
+    beliefSi: -1,
+    entrySideNorm: 0,
+    sectorLat: 0,
+    targetX: x, targetZ: z,
+    slotDist: 0,
+    slotLocked: false,
+    claimTimer: 0,
+    commitTimer: 0,          // how long I've held this belief
+    stuckFormT: 0,           // FORM time without plant (wing escape)
+    lastSlotDist: 99,
+    rescoreT: rand(0, 0.6),  // desync re-picks across the unit
+    thinkT: rand(0, MIND.thinkEvery),
+    mindElapsed: 0,
+    disputeT: 0,
+    conflictT: 0,
+    escapeEpoch: 0,
+    slotSwitches: 0,
+    formSearchT: 0,
+    noSlotT: 0,
+    searchRadius: MIND.searchStart,
+    routeStage: 1,
+    routeX: x,
+    routeZ: z,
+    wiggleCount: 0,
+    wiggleCooldown: 0,
+    lastLateralSign: 0,
+    // Explicit public intent gesture, perceived only within MIND.gestureR.
+    // FSM posture/state is a separate public social cue; all other mind state is private.
+    signalX: x, signalZ: z, signalActive: false, signalSettled: false,
+    nextSignalX: x, nextSignalZ: z, nextSignalActive: false, nextSignalSettled: false,
+    // local SA (refreshed each mind tick)
+    distSite: 0,
+    distMuster: 0,
+    nFriends: 0,
+    // prefs
+    prefEdge: 0, prefSide: 0, fileBias: 0, prefFront: 0,
+    // motion flags
+    needMove: false,
+    faceMode: 'unit', // 'unit' | 'travel'
+    travelHeading: 0,
+    faceOrderT: 0,
+    holding: false,
+    braced: false,
+    // short-lived personal passing state (no path detour)
+    passT: 0,
+    passSide: 1,
+    sideCommitT: 0,
+    blockedT: 0,
+    gait: rand(0, Math.PI * 2),
+    // Visible-state snapshot used by synchronous local motion planning.
+    seenVx: 0, seenVz: 0, seenSpeed: 0
+  };
+  rollPrefs(s);
+  receiveDoctrine(s);
+  {
+    let L = getMentalLattice(s);
+    const lat = x * L.right.x + z * L.right.z;
+    const radius = Math.hypot(x - ANCHOR.x, z - ANCHOR.z) || 1;
+    // Uniform approach angles become uniform frontage sectors while preserving
+    // which side the man actually entered from.
+    s.entrySideNorm = clamp((2 / Math.PI) * Math.asin(clamp(lat / radius, -1, 1)) + s.fileBias * 0.04, -1, 1);
+    s.sectorLat = s.entrySideNorm * L.maxLat * 0.92;
+  }
+  initV12(s, true);
+  return s;
+}
+
+function spawnField() {
+  soldiers.length = 0;
+  reseed(cfg.seed);
+  const n = cfg.count;
+  for (let i = 0; i < n; i++) {
+    const a = rand(0, Math.PI * 2);
+    const r = rand(8, 28);
+    soldiers.push(makeSoldier(i, Math.cos(a) * r, Math.sin(a) * r));
+  }
+}
+
+function resetMinds() {
+  v12SimTime = 0;
+  v12CompletionTime = null;
+  v12StrictHold = 0;
+  reliefCyclesCompleted12 = 0;
+  reliefCycleSeconds12 = 0;
+  reliefCycleMax12 = 0;
+  casualtyEvents12.length = 0;
+  for (const s of soldiers) {
+    s.vx = 0; s.vz = 0; s.speed = 0;
+    s.seenVx = 0; s.seenVz = 0; s.seenSpeed = 0;
+    receiveDoctrine(s);
+    s.beliefSi = -1;
+    s.slotLocked = false;
+    s.claimTimer = 0;
+    s.commitTimer = 0;
+    s.stuckFormT = 0;
+    s.disputeT = 0;
+    s.conflictT = 0;
+    s.escapeEpoch = 0;
+    s.slotSwitches = 0;
+    s.formSearchT = 0;
+    s.noSlotT = 0;
+    s.searchRadius = MIND.searchStart;
+    s.routeStage = 1;
+    s.routeX = s.x;
+    s.routeZ = s.z;
+    s.wiggleCount = 0;
+    s.wiggleCooldown = 0;
+    s.lastLateralSign = 0;
+    s.publicState = s.nextPublicState = PHASE.MUSTER;
+    s.neighborStates.fill(0);
+    s.dominantNeighborState = PHASE.MUSTER;
+    s.lastSlotDist = 99;
+    s.holding = false;
+    s.braced = false;
+    s.needMove = false;
+    s.faceOrderT = 0;
+    s.passT = 0;
+    s.sideCommitT = 0;
+    s.blockedT = 0;
+    s.targetX = s.x; s.targetZ = s.z;
+    s.slotDist = 0;
+    s.drill = PHASE.MUSTER;
+    s.drillTime = 0;
+    s.nearPostTime = 0;
+    s.musterReady = rand(0.0, 0.55);
+    s.rescoreT = rand(0, 0.6);
+    s.thinkT = rand(0, MIND.thinkEvery);
+    s.mindElapsed = 0;
+    s.signalX = s.nextSignalX = s.x;
+    s.signalZ = s.nextSignalZ = s.z;
+    s.signalActive = s.nextSignalActive = false;
+    s.signalSettled = s.nextSignalSettled = false;
+    {
+      const L = getMentalLattice(s);
+      s.sectorLat = clamp(s.entrySideNorm * L.maxLat * 0.92, -L.maxLat, L.maxLat);
+    }
+    initV12(s, true);
+  }
+}
+
+/** Attention only — seats and formFacing stay put (no reform). */
+function issueFaceOrder(delta) {
+  cfg.unitFacing = wrapAngle(cfg.unitFacing + delta);
+  const hold = LOCO.faceOrderHold;
+  for (const s of soldiers) {
+    s.faceMode = 'unit';
+    s.orderedFacing12 = cfg.unitFacing;
+    s.faceOrderT = hold;
+    s.needMove = false;
+    s.holding = false;
+  }
+}
+
+function setDrill(s, phase) {
+  if (s.drill === phase) return;
+  const prior = s.drill;
+  s.drill = phase;
+  s.nextPublicState = phase;
+  s.drillTime = 0;
+  if (phase === PHASE.MUSTER) {
+    s.braced = false;
+    s.slotLocked = false;
+    s.nearPostTime = 0;
+    s.beliefSi = -1;
+    s.commitTimer = 0;
+    s.nextSignalActive = false;
+    s.nextSignalSettled = false;
+  }
+  if (phase === PHASE.FORM) {
+    s.braced = false;
+    // Keep existing belief if we fell back from dress; wipe only when coming from muster
+    if (s.beliefSi == null) s.beliefSi = -1;
+    s.slotLocked = false;
+    s.nearPostTime = 0;
+    s.claimTimer = 0;
+    s.commitTimer = 0;
+    s.disputeT = 0;
+    if (prior === PHASE.MUSTER) {
+      s.formSearchT = 0;
+      s.noSlotT = 0;
+      s.searchRadius = MIND.searchStart;
+      const L = getMentalLattice(s);
+      if (L.maxLat <= 20) {
+        const lat = s.x * L.right.x + s.z * L.right.z;
+        s.sectorLat = clamp(lat + s.fileBias * L.sp * 1.1, -L.maxLat, L.maxLat);
+      }
+      // Wide fronts retain the pre-muster approach sector; compact bodies use
+      // the man's actual local wing after gathering.
+    }
+  }
+  if (phase === PHASE.DRESS) {
+    s.slotLocked = true;
+    s.claimTimer = 0;
+  }
+  if (phase === PHASE.FIGHT || phase === PHASE.FLEE) {
+    s.slotLocked = false;
+    s.beliefSi = -1;
+    s.nextSignalActive = false;
+    s.nextSignalSettled = false;
+    s.braced = phase === PHASE.FIGHT;
+  }
+}
+
+function stageSignal(s, x, z, settled) {
+  s.nextSignalX = x;
+  s.nextSignalZ = z;
+  s.nextSignalActive = true;
+  s.nextSignalSettled = !!settled;
+}
+
+// ——— Private mental lattice + phase decisions (no global auction / no god phase) ———
+// Doctrine: form shape at world (0,0). Same cell geometry for everyone (known site).
+// Private: which cell I want, occupancy I *see*, prefs, re-pick, and when to muster/form/dress.
+// v02: O(1) seats, candidate rings, dress fast-path, cached lattice — same decisions, less work.
+function updateMinds(dt) {
+  const n = soldiers.length;
+  if (!n) return;
+  const sense = cfg.senseR;
+  const seekerCap = MIND.seekerCap;
+
+  // Shared world physics may index bodies. Only staged public FSM/gesture cues
+  // are published; all perception remains range-limited from the querying man.
+  rebuildSpatial(Math.max(3.5, sense * 0.45));
+
+  // Double-buffer public gestures so array order cannot leak a newly changed
+  // decision to later agents in this cognitive tick.
+  for (const s of soldiers) {
+    s.nextPublicState = s.publicState;
+    s.nextSignalX = s.signalX;
+    s.nextSignalZ = s.signalZ;
+    s.nextSignalActive = s.signalActive;
+    s.nextSignalSettled = s.signalSettled;
+  }
+
+  for (let si = 0; si < n; si++) {
+    const s = soldiers[si];
+    s.mindElapsed += dt;
+    s.thinkT -= dt;
+    if (s.thinkT > 0) continue;
+    const mdt = s.mindElapsed;
+    s.mindElapsed = 0;
+    // Stable per-man cadence jitter prevents synchronized decision waves.
+    const cadenceJitter = 0.88 + (((s.id * 2654435761) >>> 24) / 255) * 0.24;
+    s.thinkT += MIND.thinkEvery * cadenceJitter;
+    s.nextPublicState = s.drill;
+    // This lattice belongs to s. The same drill order can yield matching models,
+    // but there is no shared slot table and no central assignment operation.
+    const L = getMentalLattice(s);
+    const { slots, wx, wz, nSlots, rows, sp, fwd, right, maxLat } = L;
+    const sectorPull = MIND.sectorPull * clamp(maxLat / 20, 0.5, 1);
+    const seatedR = sp * MIND.seated;
+    const occupyR = sp * MIND.occupy;
+    const arriveR = sp * MIND.arrive;
+    const lockR = sp * MIND.lock;
+    const unlockR = sp * MIND.unlock;
+    const formHalf = Math.hypot((L.cols - 1) * sp * 0.5, (L.rows - 1) * sp * 0.5);
+    const formBreakR = formHalf + MIND.formBreakPad;
+    if (s.drill === PHASE.FORM) s.formSearchT += mdt;
+    const fullSearchR = Math.max(MIND.searchStart, formHalf * 2 + sp * 3);
+    const expandingSearch = maxLat > 20;
+    const candR = expandingSearch ? Math.min(fullSearchR,
+      MIND.searchStart + s.formSearchT * MIND.searchGrowth + s.noSlotT * MIND.noSlotGrowth)
+      : fullSearchR;
+    s.searchRadius = candR;
+    const searchUrgency = expandingSearch ? clamp((candR - MIND.searchStart) /
+      Math.max(1, fullSearchR - MIND.searchStart), 0, 1) : 0;
+    const candMax = nSlots;
+    const wideFront = maxLat > 20;
+    const musterLat = wideFront ? s.sectorLat : 0;
+    const musterDep = wideFront ? -((L.rows - 1) * sp * 0.5 + sp * 2.2) : 0;
+    const musterX = right.x * musterLat + fwd.x * musterDep;
+    const musterZ = right.z * musterLat + fwd.z * musterDep;
+    s.drillTime += mdt;
+    s.distSite = Math.hypot(s.x - ANCHOR.x, s.z - ANCHOR.z);
+    s.distMuster = Math.hypot(s.x - musterX, s.z - musterZ);
+
+    // Explicitly broadcast FSM state is socially legible at close range for
+    // every phase, including future combat states.
+    s.neighborStates.fill(0);
+    queryNear(s.x, s.z, MIND.socialR, s);
+    for (let k = 0; k < _nearBuf.length; k++) {
+      const stateIndex = PHASE_INDEX[_nearBuf[k].publicState];
+      if (stateIndex != null) s.neighborStates[stateIndex]++;
+    }
+    let dominantI = 0;
+    for (let i = 1; i < s.neighborStates.length; i++) {
+      if (s.neighborStates[i] > s.neighborStates[dominantI]) dominantI = i;
+    }
+    s.dominantNeighborState = PHASE_NAMES[dominantI];
+
+    // Future combat states are operationally safe now, even though no scenario
+    // transitions into them yet. Their public cue is already observable.
+    if (s.drill === PHASE.FIGHT) {
+      s.targetX = s.x; s.targetZ = s.z;
+      s.slotDist = 0; s.needMove = false; s.holding = true; s.braced = true;
+      s.nextSignalActive = false; s.nextSignalSettled = false;
+      continue;
+    }
+    if (s.drill === PHASE.FLEE) {
+      const rm = s.distSite || 1;
+      s.targetX = s.x + ((s.x - ANCHOR.x) / rm) * 24;
+      s.targetZ = s.z + ((s.z - ANCHOR.z) / rm) * 24;
+      s.slotDist = Math.hypot(s.targetX - s.x, s.targetZ - s.z);
+      s.needMove = true; s.holding = false; s.braced = false;
+      s.nextSignalActive = false; s.nextSignalSettled = false;
+      continue;
+    }
+
+    // ——— DRESS fast path: planted men skip Nash / candidate scoring ———
+    if (s.drill === PHASE.DRESS && s.beliefSi >= 0 && s.beliefSi < nSlots) {
+      const bsi = s.beliefSi;
+      s.targetX = wx[bsi];
+      s.targetZ = wz[bsi];
+      s.slotDist = Math.hypot(s.x - s.targetX, s.z - s.targetZ);
+      s.commitTimer += mdt;
+      stageSignal(s, s.targetX, s.targetZ, true);
+      // phase breaks
+      if (s.distSite > formBreakR) {
+        setDrill(s, PHASE.MUSTER);
+        continue;
+      }
+      if (s.slotDist > sp * MIND.dressBreak) {
+        const keep = s.beliefSi;
+        setDrill(s, PHASE.FORM);
+        s.beliefSi = keep;
+        // fall through next frame as FORM
+        continue;
+      }
+      // An established man defends his post. Only an early, persistent duplicate
+      // is resolved by visible seniority; a passerby or shove cannot steal it.
+      const nVis = queryNear(s.x, s.z, Math.max(sense * 0.55, sp * 3), s);
+      let earlyDuplicate = false;
+      for (let k = 0; k < nVis; k++) {
+        const o = _nearBuf[k];
+        const dO = Math.hypot(o.x - wx[bsi], o.z - wz[bsi]);
+        const plantedDuplicate = dO <= occupyR && o.speed < 0.28;
+        if (plantedDuplicate && o.id < s.id && s.drillTime < MIND.stationTenure) {
+          earlyDuplicate = true; break;
+        }
+      }
+      if (earlyDuplicate) s.disputeT += mdt;
+      else s.disputeT = Math.max(0, s.disputeT - mdt * 1.5);
+      if (s.disputeT >= MIND.disputeHold) {
+        setDrill(s, PHASE.FORM);
+        s.slotLocked = false;
+        s.disputeT = 0;
+        continue;
+      }
+      s.slotLocked = true;
+      if (s.slotDist < arriveR * 1.5) s.nearPostTime += mdt;
+      continue;
+    }
+
+    // Local SA via spatial query
+    let nFriends = 0;
+    let comX = 0, comZ = 0;
+    queryNear(s.x, s.z, sense, s);
+    // Bounded nearest-neighbor perceptual budget; this is attention, not range.
+    const visCap = 48;
+    if (_nearBuf.length > visCap) {
+      const sx = s.x, sz = s.z;
+      _nearBuf.sort((a, b) => {
+        const da = (a.x - sx) * (a.x - sx) + (a.z - sz) * (a.z - sz);
+        const db = (b.x - sx) * (b.x - sx) + (b.z - sz) * (b.z - sz);
+        return da - db;
+      });
+      _nearBuf.length = visCap;
+    }
+    const vis = _nearBuf.slice();
+    // Private perceptual model: infer posts and planted stance from visible
+    // position/speed. A staged public gesture may additionally be understood
+    // inside five metres; no other mental field is readable.
+    const visSeat = new Int32Array(vis.length);
+    const visPlanted = new Uint8Array(vis.length);
+    const visSignalSeat = new Int32Array(vis.length);
+    const visSignalSettled = new Uint8Array(vis.length);
+    const signalById = new Map();
+    visSignalSeat.fill(-1);
+    for (let k = 0; k < vis.length; k++) {
+      const o = vis[k];
+      const osi = nearestSeat(o.x, o.z, L, occupyR);
+      visSeat[k] = osi;
+      visPlanted[k] = osi >= 0 && o.speed < 0.18 ? 1 : 0;
+      const d = Math.hypot(s.x - o.x, s.z - o.z);
+      if (d <= MIND.gestureR && o.signalActive) {
+        visSignalSeat[k] = nearestSeat(o.signalX, o.signalZ, L, sp * 0.38);
+        visSignalSettled[k] = o.signalSettled ? 1 : 0;
+        if (visSignalSeat[k] >= 0) signalById.set(o.id, visSignalSeat[k]);
+      }
+      if (d < MIND.musterFriendR) {
+        nFriends++;
+        comX += o.x; comZ += o.z;
+      }
+    }
+    s.nFriends = nFriends;
+    if (nFriends > 0) { comX /= nFriends; comZ /= nFriends; }
+    else { comX = s.x; comZ = s.z; }
+
+    // ——— Private phase machine ———
+    if (s.drill === PHASE.MUSTER) {
+      const holdNeed = MIND.musterHold + s.musterReady;
+      const atInner = s.distMuster < MIND.musterInner;
+      const atOuter = s.distMuster < MIND.musterRadius;
+      const withFriends = nFriends >= MIND.musterFriends;
+      const readyPacked = atInner && withFriends && s.drillTime >= holdNeed;
+      const readySolo = atInner && s.drillTime >= holdNeed + 0.9;
+      const readyOuter = atOuter && withFriends && s.drillTime >= holdNeed + 0.7;
+      const readyLate = s.drillTime >= holdNeed + 5.5 && s.distSite < formBreakR;
+      if (readyPacked || readySolo || readyOuter || readyLate) setDrill(s, PHASE.FORM);
+    } else if (s.drill === PHASE.FORM) {
+      if (s.distSite > formBreakR) setDrill(s, PHASE.MUSTER);
+      else if (
+        s.beliefSi >= 0 &&
+        s.nearPostTime >= MIND.formToDressHold &&
+        s.speed < 0.35 &&
+        s.slotDist < arriveR * 1.15
+      ) setDrill(s, PHASE.DRESS);
+    } else if (s.drill === PHASE.DRESS) {
+      if (s.distSite > formBreakR) setDrill(s, PHASE.MUSTER);
+      else if (s.slotDist > sp * MIND.dressBreak) {
+        const keep = s.beliefSi;
+        setDrill(s, PHASE.FORM);
+        s.beliefSi = keep;
+      }
+    }
+
+    // ——— MUSTER ———
+    if (s.drill === PHASE.MUSTER) {
+      s.beliefSi = -1;
+      s.slotLocked = false;
+      s.slotDist = 0;
+      s.nearPostTime = 0;
+      s.commitTimer = 0;
+      const ax = wideFront ? musterX * 0.86 + comX * 0.14 : ANCHOR.x * 0.75 + comX * 0.25;
+      const az = wideFront ? musterZ * 0.86 + comZ * 0.14 : ANCHOR.z * 0.75 + comZ * 0.25;
+      const salt = ((s.id * 17) & 31) - 15;
+      const back = sp * (0.8 + (s.id % 5) * 0.4);
+      const saltMul = wideFront ? 0.08 : 0.14;
+      const backMul = wideFront ? 0.12 : 0.2;
+      s.targetX = ax + right.x * salt * sp * saltMul - fwd.x * back * backMul;
+      s.targetZ = az + right.z * salt * sp * saltMul - fwd.z * back * backMul;
+      continue;
+    }
+
+    // ——— FORM / active: candidate seats only (not full lattice) ———
+    // Always include current belief
+    collectCandidates(s.x, s.z, L, candMax, candR);
+    if (s.beliefSi >= 0 && s.beliefSi < nSlots && _candBuf.indexOf(s.beliefSi) < 0) {
+      _candBuf.push(s.beliefSi);
+    }
+    const cands = _candBuf.slice(); // local list for this agent
+    const nCand = cands.length;
+
+    // distances to candidates only
+    const myTo = new Float64Array(nCand);
+    for (let i = 0; i < nCand; i++) {
+      const si = cands[i];
+      myTo[i] = Math.hypot(s.x - wx[si], s.z - wz[si]);
+    }
+
+    // ——— Occupancy perception (local only) ———
+    // Seat is taken only if a visible body is physically using it. A moving
+    // contender is not a broadcast claim: each man independently estimates who
+    // has precedence from range (then stable visible identity for near-ties).
+    const occupied = new Uint8Array(nCand);
+    const candIndex = new Int32Array(nSlots);
+    candIndex.fill(-1);
+    for (let i = 0; i < nCand; i++) candIndex[cands[i]] = i;
+    const seekers = [s];
+    for (let k = 0; k < vis.length; k++) {
+      const o = vis[k];
+      const oSeat = visSeat[k];
+      if (oSeat >= 0) {
+        const i = candIndex[oSeat];
+        if (i >= 0) {
+          const seat = oSeat;
+          const dO = Math.hypot(o.x - wx[seat], o.z - wz[seat]);
+          const otherPrecedes = dO + sp * 0.06 < myTo[i] ||
+            (Math.abs(dO - myTo[i]) <= sp * 0.06 && o.id < s.id);
+          // A visibly planted body owns the post regardless of who is closer.
+          if (visPlanted[k] || otherPrecedes) occupied[i] = 1;
+        }
+      }
+      const signaled = visSignalSeat[k];
+      if (signaled >= 0) {
+        const i = candIndex[signaled];
+        if (i >= 0) {
+          const dO = Math.hypot(o.x - wx[signaled], o.z - wz[signaled]);
+          const otherPrecedes = dO + sp * 0.08 < myTo[i] ||
+            (Math.abs(dO - myTo[i]) <= sp * 0.08 && o.id < s.id);
+          if (visSignalSettled[k] || otherPrecedes) occupied[i] = 1;
+        }
+      }
+      if (!visPlanted[k] && seekers.length < seekerCap) seekers.push(o);
+    }
+    let apparentFree = 0;
+    for (let i = 0; i < nCand; i++) if (!occupied[i]) apparentFree++;
+    const locallyExhausted = apparentFree <= Math.max(1, Math.floor(nCand * 0.04));
+    if (locallyExhausted) s.noSlotT += mdt;
+    else s.noSlotT = Math.max(0, s.noSlotT - mdt * 0.35);
+
+    /** Is candidate i free for *me*? (not held by a closer/visible other) */
+    function isFreeForMe(i) {
+      return !occupied[i];
+    }
+
+    function sectorCost(sl, allowCross) {
+      let cost = Math.abs(sl.lat - s.sectorLat) * sectorPull;
+      const hasWing = Math.abs(s.sectorLat) > sp * 1.25;
+      if (!allowCross && hasWing && s.sectorLat * sl.lat < -sp * sp) {
+        cost += sp * MIND.crossPenalty * (1 - searchUrgency * 0.92);
+      }
+      return cost;
+    }
+
+    function scoreAt(i) {
+      const si = cands[i];
+      const d = myTo[i];
+      const sl = slots[si];
+      let sc = -d;
+      const frontness = 1 - (sl.r / Math.max(1, rows - 1));
+      sc += s.prefFront * frontness * sp * 1.2;
+      const edgeness = Math.abs(sl.lat) / maxLat;
+      sc += s.prefEdge * edgeness * sp * 1.0;
+      sc += s.prefSide * (sl.lat / maxLat) * sp * 0.7;
+      sc -= sectorCost(sl, false);
+      if (si === s.beliefSi) sc += sp * MIND.stickBonus;
+      if (!isFreeForMe(i)) sc -= 1000;
+      return sc;
+    }
+
+    /** Default: nearest free cascade (v04/v06). */
+    function pickBest(excludeSi) {
+      const ranked = [];
+      for (let i = 0; i < nCand; i++) {
+        if (excludeSi != null && cands[i] === excludeSi) continue;
+        if (!isFreeForMe(i)) continue;
+        ranked.push(i);
+      }
+      const claimCost = (i) => {
+        const sl = slots[cands[i]];
+        const sector = sectorCost(sl, false);
+        const rowTaste = -s.prefFront * (1 - sl.r / Math.max(1, rows - 1)) * sp * 0.35;
+        return myTo[i] + sector + rowTaste;
+      };
+      ranked.sort((a, b) => claimCost(a) - claimCost(b));
+      if (!ranked.length) return -1;
+
+      const K = Math.min(MIND.nearRankMax, ranked.length);
+
+      if (s.beliefSi >= 0 && s.beliefSi !== excludeSi) {
+        for (let r = 0; r < K; r++) {
+          if (cands[ranked[r]] === s.beliefSi) return s.beliefSi;
+        }
+      }
+
+      for (let r = 0; r < K; r++) {
+        const i = ranked[r];
+        const si = cands[i];
+        let iAmClosest = true;
+        for (let k = 0; k < seekers.length; k++) {
+          const o = seekers[k];
+          if (o === s) continue;
+          const signaled = signalById.get(o.id);
+          if (signaled != null && signaled !== si) continue;
+          const dO = Math.hypot(o.x - wx[si], o.z - wz[si]);
+          if (dO + sp * 0.06 < myTo[i] ||
+              (Math.abs(dO - myTo[i]) <= sp * 0.06 && o.id < s.id)) {
+            iAmClosest = false; break;
+          }
+        }
+        if (iAmClosest) return si;
+      }
+
+      // No nearby seat has clear precedence. Instead of joining the nearest
+      // scrum, privately sample a wider fan and choose the least-contested
+      // approach. This is range/position reasoning, not a claim exchange.
+      let fallback = ranked[0];
+      let fallbackScore = -Infinity;
+      const fan = Math.min(64, ranked.length);
+      for (let r = 0; r < fan; r++) {
+        const i = ranked[r];
+        const seat = cands[i];
+        let nearestOther = Infinity;
+        for (let k = 0; k < seekers.length; k++) {
+          const o = seekers[k];
+          if (o === s) continue;
+          const signaled = signalById.get(o.id);
+          if (signaled != null && signaled !== seat) continue;
+          nearestOther = Math.min(nearestOther, Math.hypot(o.x - wx[seat], o.z - wz[seat]));
+        }
+        if (!Number.isFinite(nearestOther)) nearestOther = myTo[i] + sp;
+        const sl = slots[seat];
+        const personal = -sectorCost(sl, false) +
+          s.prefSide * (sl.lat / maxLat) * sp * 0.65 +
+          s.prefFront * (1 - sl.r / Math.max(1, rows - 1)) * sp * 0.25;
+        const score = (nearestOther - myTo[i]) * 1.8 - myTo[i] * 0.12 + personal;
+        if (score > fallbackScore) { fallbackScore = score; fallback = i; }
+      }
+      return cands[fallback];
+    }
+
+    /** Endgame escape: pick one of the nearest apparently free posts, salted
+     * per man/attempt. Same-wing routes remain strongly preferred, but this can
+     * eventually use a remote vacancy instead of replaying musical chairs. */
+    function pickEndgameFree(excludeSi) {
+      const ranked = [];
+      const hasWing = Math.abs(s.sectorLat) > sp * 1.25;
+      for (let i = 0; i < nCand; i++) {
+        const seat = cands[i];
+        if (seat === excludeSi || !isFreeForMe(i)) continue;
+        const sl = slots[seat];
+        const crosses = hasWing && s.sectorLat * sl.lat < -sp * sp;
+        const route = myTo[i] + Math.abs(sl.lat - s.sectorLat) * 0.18 +
+          (crosses ? sp * MIND.crossPenalty * 0.65 * (1 - searchUrgency * 0.95) : 0);
+        ranked.push({ seat, route });
+      }
+      if (!ranked.length) return pickBest(excludeSi);
+      ranked.sort((a, b) => a.route - b.route);
+      s.escapeEpoch = (s.escapeEpoch + 1) | 0;
+      const pool = Math.min(18, ranked.length);
+      let choice = ranked[0].seat;
+      let best = -Infinity;
+      for (let i = 0; i < pool; i++) {
+        // Prefer the cheaper half of the pool but make nearby stuck men diverge.
+        const score = hash01(s.id, ranked[i].seat, s.escapeEpoch) - i / (pool * 1.35);
+        if (score > best) { best = score; choice = ranked[i].seat; }
+      }
+      return choice;
+    }
+
+    function commit(slot, forceWalk) {
+      if (slot < 0 || slot >= nSlots) return;
+      const changed = slot !== s.beliefSi;
+      if (changed && s.beliefSi >= 0) s.slotSwitches++;
+      s.beliefSi = slot;
+      s.targetX = wx[slot];
+      s.targetZ = wz[slot];
+      s.slotDist = Math.hypot(s.x - s.targetX, s.z - s.targetZ);
+      stageSignal(s, s.targetX, s.targetZ, false);
+      if (changed || forceWalk) {
+        const rearDep = -((rows - 1) * sp * 0.5 + sp * 1.8);
+        const sl = slots[slot];
+        s.routeX = right.x * sl.lat + fwd.x * rearDep;
+        s.routeZ = right.z * sl.lat + fwd.z * rearDep;
+        const routeDist = Math.hypot(s.x - s.routeX, s.z - s.routeZ);
+        s.routeStage = maxLat > 20 && s.slotDist > sp * 3.2 && routeDist > sp * 1.1 ? 0 : 1;
+        s.slotLocked = false;
+        s.claimTimer = 0;
+        s.conflictT = 0;
+        s.commitTimer = 0;
+        s.lastSlotDist = s.slotDist;
+        s.holding = false;
+        s.nearPostTime = 0;
+        if (s.slotDist > arriveR) {
+          s.faceMode = 'travel';
+          s.needMove = true;
+          s.travelHeading = Math.atan2(s.targetX - s.x, s.targetZ - s.z);
+        }
+      }
+    }
+
+    // If currently in DRESS but not on fast path (no belief), pick
+    if (s.drill === PHASE.DRESS) {
+      if (s.beliefSi < 0 || s.beliefSi >= nSlots) commit(pickBest(null), true);
+      else {
+        s.targetX = wx[s.beliefSi];
+        s.targetZ = wz[s.beliefSi];
+        s.slotDist = Math.hypot(s.x - s.targetX, s.z - s.targetZ);
+        s.slotLocked = true;
+      }
+      continue;
+    }
+
+    // ——— FORM sticky belief ———
+    if (s.beliefSi >= 0 && s.beliefSi < nSlots) {
+      s.targetX = wx[s.beliefSi];
+      s.targetZ = wz[s.beliefSi];
+      s.slotDist = Math.hypot(s.x - s.targetX, s.z - s.targetZ);
+      stageSignal(s, s.targetX, s.targetZ, s.slotLocked && s.slotDist < arriveR * 1.2);
+      s.commitTimer += mdt;
+      const closing = s.slotDist < s.lastSlotDist - sp * MIND.progressFrac * 0.12;
+      if (s.slotDist < s.lastSlotDist) s.lastSlotDist = s.slotDist;
+      // Stuck only if NOT making progress toward seat (don't abandon a good long walk)
+      if (s.slotDist > arriveR * 1.15 && !closing && s.speed < 0.55)
+        s.stuckFormT = (s.stuckFormT || 0) + mdt;
+      else if (closing || s.slotDist <= arriveR * 1.15)
+        s.stuckFormT = Math.max(0, (s.stuckFormT || 0) - mdt * 0.8);
+
+      // Hard loss requires visible occupation, never another man's private claim.
+      let takenHard = false;
+      if (s.beliefSi >= 0) {
+        for (let k = 0; k < vis.length; k++) {
+          const o = vis[k];
+          const dO = Math.hypot(o.x - wx[s.beliefSi], o.z - wz[s.beliefSi]);
+          const visiblyThere = dO <= occupyR || visSeat[k] === s.beliefSi;
+          const otherPrecedes = dO + sp * 0.08 < s.slotDist ||
+            (Math.abs(dO - s.slotDist) <= sp * 0.08 && o.id < s.id);
+          const plantedOwner = visPlanted[k] && visSeat[k] === s.beliefSi;
+          const signaledOwner = visSignalSeat[k] === s.beliefSi &&
+            (visSignalSettled[k] || otherPrecedes);
+          if (plantedOwner || signaledOwner || (visiblyThere && otherPrecedes)) {
+            takenHard = true; break;
+          }
+        }
+      }
+      if (takenHard) s.conflictT += mdt;
+      else s.conflictT = Math.max(0, s.conflictT - mdt * 1.8);
+      const confirmedConflict = s.conflictT >= 0.35;
+
+      // Near plant: harder unlock so traffic doesn't reshuffle the line
+      const unlockUse = (s.slotDist < arriveR * 1.8) ? unlockR * 1.35 : unlockR;
+
+      if (s.slotLocked) {
+        if (s.slotDist > unlockUse || confirmedConflict) {
+          s.slotLocked = false;
+          s.nearPostTime = 0;
+          if (confirmedConflict) commit(pickBest(s.beliefSi), true);
+        } else {
+          if (s.slotDist < arriveR && s.speed < 0.5) s.nearPostTime += mdt;
+          else s.nearPostTime = Math.max(0, s.nearPostTime - mdt * 0.4);
+          continue;
+        }
+      }
+
+      if (s.slotDist < lockR && !confirmedConflict) {
+        s.slotLocked = true;
+        s.claimTimer = 0;
+        if (s.slotDist < arriveR) s.stuckFormT = 0;
+        if (s.slotDist < arriveR && s.speed < 0.5) s.nearPostTime += mdt;
+        continue;
+      }
+
+      if (s.slotDist < arriveR || closing) s.claimTimer = 0;
+      else if (s.speed < 0.4) s.claimTimer += mdt;
+      else s.claimTimer = Math.max(0, s.claimTimer - mdt * 0.35);
+
+      if (confirmedConflict) commit(pickBest(s.beliefSi), true);
+      else if (
+        MIND.wingEscape &&
+        (s.stuckFormT || 0) >= MIND.stuckFormTime &&
+        s.commitTimer >= MIND.minCommit &&
+        !closing
+      ) {
+        // Truly stuck: choose a salted nearby free post, once.
+        s.stuckFormT = 0;
+        s.claimTimer = 0;
+        s.conflictT = 0;
+        commit(pickEndgameFree(s.beliefSi), true);
+      } else if (s.claimTimer >= MIND.claimTimeout && s.commitTimer >= MIND.minCommit && !closing) {
+        // Not closing: break symmetry rather than sending the whole knot to one seat.
+        commit(pickEndgameFree(s.beliefSi), true);
+      } else if (s.commitTimer >= MIND.minCommit) {
+        s.rescoreT -= mdt;
+        if (s.rescoreT <= 0) {
+          s.rescoreT = MIND.rescoreEvery + rand(0, 0.35);
+          // find current score
+          let curI = -1;
+          for (let i = 0; i < nCand; i++) if (cands[i] === s.beliefSi) { curI = i; break; }
+          const cur = curI >= 0 ? scoreAt(curI) : -1e9;
+          const best = pickBest(null);
+          if (best !== s.beliefSi && best >= 0) {
+            let bestSc = -1e9;
+            for (let i = 0; i < nCand; i++) if (cands[i] === best) { bestSc = scoreAt(i); break; }
+            if (bestSc > cur + sp * MIND.switchMargin) commit(best, true);
+          }
+        }
+      }
+    } else {
+      commit(pickBest(null), true);
+    }
+  }
+
+  for (const s of soldiers) {
+    s.publicState = s.nextPublicState;
+    s.signalX = s.nextSignalX;
+    s.signalZ = s.nextSignalZ;
+    s.signalActive = s.nextSignalActive;
+    s.signalSettled = s.nextSignalSettled;
+  }
+}
+
+// ——— Physics: desire + headed walk + hard discs ———
+/** Personal right in XZ: forward × world-up. */
+function rightOfHeading(h) {
+  return { x: -Math.cos(h), z: Math.sin(h) };
+}
+
+/**
+ * Sticky pass side: prefer personal right (sailor hallway).
+ * While sideCommitT > 0, freeze the chosen side (kills left-right dance).
+ */
+function choosePassSide(s, preferred) {
+  if ((s.sideCommitT || 0) > 0) return s.passSide || 1;
+  const side = preferred >= 0 ? 1 : -1;
+  if (side !== (s.passSide || 1)) {
+    s.passSide = side;
+    s.sideCommitT = LOCO.sideCommitT0;
+  } else {
+    s.passSide = side;
+  }
+  return s.passSide;
+}
+
+function planSoldier(s, dt) {
+  const sp = cfg.spacing;
+  const hardR = cfg.bodyR;
+  const arriveR = sp * MIND.arrive;
+  const drill = s.drill;
+
+  // Brief FACE order: pivot only (does not change seat logic after timer)
+  if (s.faceOrderT > 0) s.faceOrderT = Math.max(0, s.faceOrderT - dt);
+  const faceLock = s.faceOrderT > 0;
+  if (s.passT > 0) s.passT = Math.max(0, s.passT - dt);
+  if (s.sideCommitT > 0) s.sideCommitT = Math.max(0, s.sideCommitT - dt);
+  if (s.wiggleCooldown > 0) s.wiggleCooldown = Math.max(0, s.wiggleCooldown - dt);
+
+  // Separation via spatial neighbors — wider soft bubble while relocating so paths can slide
+  let sepX = 0, sepZ = 0;
+  let jamX = 0, jamZ = 0, jamN = 0;
+  let nearBody = false, blockedAhead = false;
+  let predictedThreat = 0, stationaryThreat = 0;
+  const plantDress = drill === PHASE.DRESS && s.slotDist < arriveR * 1.6;
+  s.braced = plantDress && s.nearPostTime >= MIND.formToDressHold;
+  const relocating = drill === PHASE.MUSTER || drill === PHASE.FLEE ||
+    (drill === PHASE.FORM && !(s.slotLocked && s.slotDist < sp * MIND.lock));
+  const softMul = plantDress ? 0.55 : (relocating ? LOCO.travelSoft : 0.95);
+  const soft = (hardR * 2 + 0.4) * softMul;
+  const avoidRadius = soft + Math.max(LOCO.walk, s.seenSpeed) * LOCO.avoidHorizon;
+  const nSep = faceLock ? 0 : queryNear(s.x, s.z, avoidRadius, s);
+  const hf0 = Math.sin(s.heading), hz0 = Math.cos(s.heading);
+  const rf0 = -Math.cos(s.heading), rz0 = Math.sin(s.heading); // personal right
+  if (drill === PHASE.FORM && getMentalLattice(s).maxLat > 20 &&
+      s.routeStage === 1 && s.beliefSi >= 0 &&
+      s.slotDist > sp * 3.2 && (s.blockedT || 0) > 1.4) {
+    const L = getMentalLattice(s);
+    const sl = L.slots[s.beliefSi];
+    const rearDep = -((L.rows - 1) * L.sp * 0.5 + L.sp * 1.8);
+    s.routeX = L.right.x * sl.lat + L.fwd.x * rearDep;
+    s.routeZ = L.right.z * sl.lat + L.fwd.z * rearDep;
+    s.routeStage = 0;
+    s.blockedT = 0;
+  }
+  let navX = s.targetX, navZ = s.targetZ;
+  if (drill === PHASE.FORM && s.routeStage === 0) {
+    const routeDist = Math.hypot(s.routeX - s.x, s.routeZ - s.z);
+    if (routeDist < sp * 1.1) s.routeStage = 1;
+    else { navX = s.routeX; navZ = s.routeZ; }
+  }
+  // Personal navigation bearing for blocked-path perception.
+  const seatHx = (navX - s.x), seatHz = (navZ - s.z);
+  const seatHm = Math.hypot(seatHx, seatHz) || 1;
+  const shx = seatHx / seatHm, shz = seatHz / seatHm;
+
+  for (let k = 0; k < nSep; k++) {
+    const o = _nearBuf[k];
+    const ox = s.x - o.x, oz = s.z - o.z;
+    const d = Math.hypot(ox, oz);
+    if (d > 1e-4 && d < soft) {
+      const t = (soft - d) / soft;
+      const w = plantDress ? (d < hardR * 2.05 ? 1.2 : 0.15) : 1.0;
+      // radial push
+      sepX += (ox / d) * t * t * w;
+      sepZ += (oz / d) * t * t * w;
+      nearBody = true;
+
+      // if neighbor is ahead while we're relocating, peel personal RIGHT (shared hallway rule)
+      if (relocating && !plantDress) {
+        const toThemH = (o.x - s.x) * hf0 + (o.z - s.z) * hz0;
+        const toThemS = (o.x - s.x) * shx + (o.z - s.z) * shz;
+        const ahead = toThemH > 0.02 || toThemS > 0.05;
+        if (ahead && d < soft * 0.98) {
+          blockedAhead = true;
+          const side = choosePassSide(s, 1);
+          sepX += rf0 * side * t * 0.95;
+          sepZ += rz0 * side * t * 0.95;
+        }
+        // Jam peel: close bodies ahead/side — not only when already slow
+        if (d < hardR * 2.6 && toThemH > -0.15) {
+          const oPlant = o.seenSpeed < 0.25;
+          const relVx = (s.seenVx - o.seenVx), relVz = (s.seenVz - o.seenVz);
+          const approach = -(relVx * (ox / d) + relVz * (oz / d));
+          const staticMul = (Math.abs(approach) < 0.35 || s.speed < 0.65 || o.speed < 0.25 || oPlant)
+            ? LOCO.staticJamBoost : 1.0;
+          const side = choosePassSide(s, 1);
+          jamX += rf0 * side * staticMul;
+          jamZ += rz0 * side * staticMul;
+          jamN++;
+        }
+      }
+    }
+
+    // Reciprocal velocity-obstacle approximation. The soldier projects only a
+    // visible neighbor's current trajectory, chooses his personal right, and
+    // forgets the projection next tick—there is no path server or shared route.
+    if (relocating && !plantDress && d > 1e-4) {
+      const rx = o.x - s.x, rz = o.z - s.z;
+      const along = rx * shx + rz * shz;
+      const across = Math.abs(rx * (-shz) + rz * shx);
+      const rvx = o.seenVx - s.seenVx, rvz = o.seenVz - s.seenVz;
+      const rv2 = rvx * rvx + rvz * rvz;
+      if (rv2 > 0.015) {
+        const tca = clamp(-(rx * rvx + rz * rvz) / rv2, 0, LOCO.avoidHorizon);
+        const cx = rx + rvx * tca, cz = rz + rvz * tca;
+        const closest = Math.hypot(cx, cz);
+        const toward = rx * rvx + rz * rvz < 0;
+        if (toward && tca > 0.02 && closest < LOCO.avoidClear) {
+          const threat = (1 - closest / LOCO.avoidClear) * (1 - tca / LOCO.avoidHorizon);
+          const side = choosePassSide(s, 1);
+          sepX += rf0 * side * threat * LOCO.avoidGain;
+          sepZ += rz0 * side * threat * LOCO.avoidGain;
+          predictedThreat = Math.max(predictedThreat, threat);
+          if (o.seenSpeed < 0.28) stationaryThreat = Math.max(stationaryThreat, threat + 0.18);
+          blockedAhead = true;
+        }
+      }
+      // A man beginning from rest still sees a planted body blocking his lane;
+      // this geometric check does not require a relative-velocity prediction.
+      if (o.seenSpeed < 0.28 && along > 0 && along < avoidRadius && across < LOCO.avoidClear * 1.1) {
+        const threat = (1 - along / avoidRadius) * (1 - across / (LOCO.avoidClear * 1.1));
+        const side = choosePassSide(s, 1);
+        sepX += rf0 * side * threat * LOCO.avoidGain * 1.25;
+        sepZ += rz0 * side * threat * LOCO.avoidGain * 1.25;
+        stationaryThreat = Math.max(stationaryThreat, threat);
+        blockedAhead = true;
+      }
+    }
+  }
+
+  // Open/refresh pass-window when soft-touching or blocked while relocating
+  if (relocating && !plantDress && !faceLock && (nearBody || blockedAhead || jamN > 0)) {
+    s.passT = Math.max(s.passT || 0, LOCO.passT0 * (blockedAhead || jamN > 0 ? 1.0 : 0.55));
+    if ((s.sideCommitT || 0) <= 0) choosePassSide(s, 1);
+  }
+  if (blockedAhead && relocating) s.blockedT = (s.blockedT || 0) + dt;
+  else s.blockedT = Math.max(0, (s.blockedT || 0) - dt * 1.5);
+
+  let dx = 0, dz = 0;
+  const gx = navX - s.x, gz = navZ - s.z;
+  const gd = Math.hypot(gx, gz) || 1;
+
+  if (!faceLock) {
+    if (drill === PHASE.FLEE) {
+      dx += (gx / gd) * cfg.press * 1.2;
+      dz += (gz / gd) * cfg.press * 1.2;
+    } else if (drill === PHASE.FIGHT) {
+      // Combat behavior will be added later; current scaffold holds frontage.
+    } else if (drill === PHASE.MUSTER) {
+      const k = cfg.press * (s.distMuster > 14 ? 1.15 : 0.7);
+      dx += (gx / gd) * k;
+      dz += (gz / gd) * k;
+    } else if (drill === PHASE.FORM) {
+      // Only "arrived" at seat kills strong approach — NOT mere slotLocked
+      const onPost = s.slotDist < arriveR;
+      if (!onPost) {
+        const k = cfg.press * (s.slotDist > sp * 2 ? 1.05 : 0.6);
+        dx += (gx / gd) * k;
+        dz += (gz / gd) * k;
+      } else if (s.slotDist > 0.06) {
+        dx += gx * cfg.press * 0.16;
+        dz += gz * cfg.press * 0.16;
+      }
+    } else {
+      // DRESS: strong magnet back to seat; no wander
+      if (s.slotDist > 0.04) {
+        dx += gx * cfg.press * 0.95;
+        dz += gz * cfg.press * 0.95;
+      }
+    }
+
+    const sepGain = drill === PHASE.MUSTER ? 0.85 : (plantDress ? 0.35 : 1.05);
+    dx += sepX * cfg.sep * sepGain;
+    dz += sepZ * cfg.sep * sepGain;
+    // Stuck / blocked: slide on personal right instead of headbutting
+    if (jamN > 0 && relocating) {
+      const jm = Math.hypot(jamX, jamZ) || 1;
+      dx += (jamX / jm) * cfg.press * LOCO.jamSlide;
+      dz += (jamZ / jm) * cfg.press * LOCO.jamSlide;
+    }
+    // Pass-window strafe in desire space (heading still faces seat — no spin)
+    if ((s.passT || 0) > 0 && relocating && !plantDress) {
+      const side = s.passSide || 1;
+      const arrivalMul = drill === PHASE.FORM && s.slotDist < sp * 1.2 ? 0.48 : 1;
+      const str = LOCO.passStrafe * arrivalMul * (0.55 + 0.45 * Math.min(1, (s.blockedT || 0) / 0.5));
+      dx += rf0 * side * cfg.press * str;
+      dz += rz0 * side * cfg.press * str;
+    }
+  }
+
+  const mag = Math.hypot(dx, dz);
+  const onPost = drill !== PHASE.MUSTER && s.slotDist < arriveR;
+
+  // Face + move — travelHeading = seat only (no sticky detour)
+  if (faceLock) {
+    s.faceMode = 'unit';
+    s.needMove = false;
+    s.holding = false;
+  } else if (drill === PHASE.FIGHT) {
+    s.faceMode = 'unit';
+    s.needMove = false;
+    s.holding = true;
+  } else if (drill === PHASE.FLEE) {
+    s.faceMode = 'travel';
+    s.needMove = true;
+    s.holding = false;
+    s.travelHeading = Math.atan2(dx, dz);
+  } else if (drill === PHASE.DRESS) {
+    s.faceMode = 'unit';
+    s.needMove = s.slotDist > 0.12 && mag > 0.08;
+    s.holding = s.slotDist < arriveR * 1.25 && s.speed < 0.22;
+    if (s.needMove) s.travelHeading = Math.atan2(dx, dz);
+  } else if (onPost && mag < LOCO.moveCommit * 1.2) {
+    s.faceMode = 'unit';
+    s.needMove = false;
+    s.holding = s.slotDist < arriveR * 1.15 && s.speed < 0.25;
+  } else if (mag >= LOCO.moveCommit) {
+    s.faceMode = 'travel';
+    s.needMove = true;
+    s.holding = false;
+    // During a committed pass, steer through the locally chosen corridor
+    // instead of snapping back toward the goal every frame.
+    const wideMotion = getMentalLattice(s).maxLat > 20;
+    s.travelHeading = wideMotion && ((s.passT || 0) > 0 || blockedAhead)
+      ? Math.atan2(dx, dz) : Math.atan2(gx, gz);
+  } else {
+    s.needMove = false;
+    s.holding = onPost;
+    s.faceMode = onPost ? 'unit' : 'travel';
+  }
+
+  const wantH = (s.faceMode === 'travel' && s.needMove) ? s.travelHeading : cfg.unitFacing;
+  const err = angleDiff(wantH, s.heading);
+  const turnStep = LOCO.turn * dt * (faceLock ? 1.25 : 1);
+  if (Math.abs(err) <= turnStep) s.heading = wantH;
+  else s.heading += clamp(err, -turnStep, turnStep);
+
+  let intent = 0;
+  if (s.needMove && !faceLock) {
+    if (drill === PHASE.FLEE) {
+      intent = LOCO.run;
+    } else if (drill === PHASE.FIGHT) {
+      intent = 0;
+    } else if (drill === PHASE.MUSTER) {
+      intent = s.distMuster > 12 ? LOCO.run : LOCO.walk;
+    } else if (drill === PHASE.DRESS) {
+      intent = Math.min(LOCO.shuffle * 1.55, s.slotDist * 3.0);
+    } else {
+      if (s.slotDist > sp * 4) intent = LOCO.run;
+      else if (s.slotDist > sp * 1.2) intent = LOCO.walk;
+      else intent = LOCO.shuffle;
+    }
+    const align = Math.cos(angleDiff(wantH, s.heading));
+    if (align < 0.3) intent *= 0.15;
+    else intent *= clamp(align, 0.2, 1);
+    // Give the lateral choice time to work instead of charging through an
+    // imminent predicted contact. Never stops completely, avoiding reciprocal freeze.
+    const brake = Math.min(LOCO.stationBrake, predictedThreat * 0.4 + stationaryThreat * 0.92);
+    intent *= Math.max(0.14, 1 - brake);
+  }
+
+  const hf = Math.sin(s.heading), hz = Math.cos(s.heading);
+  let desVx = hf * intent, desVz = hz * intent;
+  const formInsert = drill === PHASE.FORM && s.needMove && s.slotDist < sp * 1.35 && mag > 1e-6;
+
+  // Final FORM insertion is a controlled shuffle in desire space. This permits
+  // a lateral slide into the chosen post without left-right heading oscillation.
+  if (formInsert) {
+    const insertSpeed = Math.min(intent, LOCO.shuffle * 0.95);
+    desVx = (dx / mag) * insertSpeed;
+    desVz = (dz / mag) * insertSpeed;
+  }
+
+  // Dress plant: allow tiny lateral correction toward seat without spinning
+  if (drill === PHASE.DRESS && s.needMove && s.slotDist < sp * 0.9) {
+    desVx = gx * Math.min(1.1, intent / Math.max(0.01, s.slotDist));
+    desVz = gz * Math.min(1.1, intent / Math.max(0.01, s.slotDist));
+    const sm = Math.hypot(desVx, desVz);
+    const braceSpeed = LOCO.shuffle * 1.55;
+    if (sm > braceSpeed) {
+      desVx *= braceSpeed / sm;
+      desVz *= braceSpeed / sm;
+    }
+  }
+
+  if (drill === PHASE.FORM && s.slotDist < sp * 2 && gd > 0.05) {
+    const lateral = desVx * (-gz / gd) + desVz * (gx / gd);
+    const sign = Math.abs(lateral) > 0.08 ? Math.sign(lateral) : 0;
+    if (sign && s.lastLateralSign && sign !== s.lastLateralSign && s.wiggleCooldown <= 0) {
+      s.wiggleCount++;
+      s.wiggleCooldown = 0.35;
+    }
+    if (sign) s.lastLateralSign = sign;
+  } else if (s.slotDist >= sp * 2.5) {
+    s.lastLateralSign = 0;
+  }
+
+  const a = (intent > s.speed ? 5.0 : 7.0) * dt;
+  const evx = desVx - s.vx, evz = desVz - s.vz;
+  const em = Math.hypot(evx, evz);
+  if (em > a && em > 1e-8) {
+    s.vx += (evx / em) * a;
+    s.vz += (evz / em) * a;
+  } else {
+    s.vx = desVx; s.vz = desVz;
+  }
+
+  if (drill === PHASE.DRESS && plantDress) {
+    if (!s.needMove || s.slotDist < 0.1) {
+      s.vx *= Math.exp(-14 * dt);
+      s.vz *= Math.exp(-14 * dt);
+    }
+  } else if (intent > 0.05 && !formInsert && !(drill === PHASE.DRESS && s.slotDist < sp * 0.9)) {
+    const rf = -Math.cos(s.heading), rz = Math.sin(s.heading);
+    const vFwd = s.vx * hf + s.vz * hz;
+    let vLat = s.vx * rf + s.vz * rz;
+    // pass-window keeps micro-strafe alive long enough to clear a body
+    const latDamp = (s.passT || 0) > 0 ? LOCO.vLatPassDamp : LOCO.vLatDamp;
+    vLat *= Math.exp(-latDamp * dt);
+    if (Math.abs(vLat) > LOCO.maxPassLat) vLat = Math.sign(vLat) * LOCO.maxPassLat;
+    const fwdKeep = (s.passT || 0) > 0 ? Math.max(-0.15, vFwd) : Math.max(0, vFwd);
+    s.vx = hf * fwdKeep + rf * vLat;
+    s.vz = hz * fwdKeep + rz * vLat;
+  } else if ((s.passT || 0) > 0 && relocating && !plantDress) {
+    const rf = -Math.cos(s.heading), rz = Math.sin(s.heading);
+    let vLat = s.vx * rf + s.vz * rz;
+    const side = s.passSide || 1;
+    if (Math.abs(vLat) < 0.2) vLat += side * 0.35;
+    vLat *= Math.exp(-LOCO.vLatPassDamp * dt);
+    if (Math.abs(vLat) > LOCO.maxPassLat) vLat = Math.sign(vLat) * LOCO.maxPassLat;
+    const vFwd = Math.max(0, s.vx * hf + s.vz * hz);
+    s.vx = hf * vFwd + rf * vLat;
+    s.vz = hz * vFwd + rz * vLat;
+  }
+  if (intent < 0.02 && (s.passT || 0) <= 0) {
+    s.vx *= Math.exp(-10 * dt);
+    s.vz *= Math.exp(-10 * dt);
+  }
+
+  s.speed = Math.hypot(s.vx, s.vz);
+  if (drill === PHASE.DRESS && s.speed < LOCO.stopSpeed && s.slotDist < 0.1) {
+    s.vx = 0; s.vz = 0; s.speed = 0;
+  }
+}
+
+function integrateSoldier(s, dt) {
+  s.x += s.vx * dt;
+  s.z += s.vz * dt;
+  s.gait += dt * (4 + s.speed * 2.5);
+}
+
+function resolveCollisions() {
+  // Small solver skin absorbs one-frame integration error without visible gaps.
+  const r = cfg.bodyR * 2 + 0.035;
+  const r2 = r * r;
+  rebuildSpatial(Math.max(r * 1.25, 1.15));
+  const iters = soldiers.length > 400 ? 5 : 7;
+  for (let iter = 0; iter < iters; iter++) {
+    for (let i = 0; i < soldiers.length; i++) {
+      const a = soldiers[i];
+      const nN = queryNear(a.x, a.z, r * 1.08, a);
+      for (let k = 0; k < nN; k++) {
+        const b = _nearBuf[k];
+        if (b.id <= a.id) continue;
+        const dx = b.x - a.x, dz = b.z - a.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < r2) {
+          let d, ux, uz;
+          if (d2 > 1e-12) {
+            d = Math.sqrt(d2);
+            ux = dx / d; uz = dz / d;
+          } else {
+            // Coincident centers previously became permanent ghosts. Use a
+            // deterministic pair normal so the result is stable and separable.
+            const ang = ((a.id * 0.754877666 + b.id * 0.569840296) % 1) * Math.PI * 2;
+            d = 0; ux = Math.cos(ang); uz = Math.sin(ang);
+          }
+
+          // Position-based dynamics with an explicit physical brace. Only a man
+          // who planted himself sets braced; a merely stalled mover stays mobile.
+          const penetration = r - d;
+          const aMob = a.braced ? 0.025 : 0.18 + 0.82 * clamp(a.speed / 0.8, 0, 1);
+          const bMob = b.braced ? 0.025 : 0.18 + 0.82 * clamp(b.speed / 0.8, 0, 1);
+          const mobSum = aMob + bMob;
+          a.x -= ux * penetration * (aMob / mobSum);
+          a.z -= uz * penetration * (aMob / mobSum);
+          b.x += ux * penetration * (bMob / mobSum);
+          b.z += uz * penetration * (bMob / mobSum);
+
+          const aReloc = a.speed > 0.08;
+          const bReloc = b.speed > 0.08;
+
+          const tx = -uz, tz = ux;
+          const aRight = rightOfHeading(a.heading);
+          const bRight = rightOfHeading(b.heading);
+          let aSide = Math.sign(aRight.x * tx + aRight.z * tz) || 1;
+          let bSide = Math.sign(bRight.x * tx + bRight.z * tz) || 1;
+          if ((a.sideCommitT || 0) > 0) aSide = a.passSide || aSide;
+          if ((b.sideCommitT || 0) > 0) bSide = b.passSide || bSide;
+          if (aReloc) {
+            a.passT = Math.max(a.passT || 0, LOCO.passT0);
+            if ((a.sideCommitT || 0) <= 0) { a.passSide = aSide; a.sideCommitT = LOCO.sideCommitT0; }
+          }
+          if (bReloc) {
+            b.passT = Math.max(b.passT || 0, LOCO.passT0);
+            if ((b.sideCommitT || 0) <= 0) { b.passSide = bSide; b.sideCommitT = LOCO.sideCommitT0; }
+          }
+
+          const relN = (b.vx - a.vx) * ux + (b.vz - a.vz) * uz;
+          const staticBoost = Math.abs(relN) < 0.4 ? LOCO.staticJamBoost : 1.0;
+
+          const va = a.vx * ux + a.vz * uz;
+          const vb = b.vx * ux + b.vz * uz;
+          if (va > 0) { a.vx -= ux * va * 0.85 * aMob; a.vz -= uz * va * 0.85 * aMob; }
+          if (vb < 0) { b.vx -= ux * vb * 0.85 * bMob; b.vz -= uz * vb * 0.85 * bMob; }
+
+          const aVt = a.vx * tx + a.vz * tz;
+          const bVt = b.vx * tx + b.vz * tz;
+          const relT = bVt - aVt;
+          const slip = LOCO.tangSlip;
+          const minPeel = (Math.abs(relN) < 0.35 && Math.abs(relT) < 0.5) ? 0.55 * staticBoost : 0;
+          if (aReloc) {
+            const peel = (0.45 * staticBoost + minPeel) * aMob;
+            a.vx += aRight.x * (a.passSide || aSide) * peel;
+            a.vz += aRight.z * (a.passSide || aSide) * peel;
+            a.vx += tx * relT * slip * 0.35;
+            a.vz += tz * relT * slip * 0.35;
+            const ah = Math.sin(a.heading), az = Math.cos(a.heading);
+            const ar = -Math.cos(a.heading), arz = Math.sin(a.heading);
+            let lat = a.vx * ar + a.vz * arz;
+            if (Math.abs(lat) > LOCO.maxPassLat) {
+              const fwd = a.vx * ah + a.vz * az;
+              lat = Math.sign(lat) * LOCO.maxPassLat;
+              a.vx = ah * fwd + ar * lat;
+              a.vz = az * fwd + arz * lat;
+            }
+          }
+          if (bReloc) {
+            const peel = (0.45 * staticBoost + minPeel) * bMob;
+            b.vx += bRight.x * (b.passSide || bSide) * peel;
+            b.vz += bRight.z * (b.passSide || bSide) * peel;
+            b.vx -= tx * relT * slip * 0.35;
+            b.vz -= tz * relT * slip * 0.35;
+            const bh = Math.sin(b.heading), bz = Math.cos(b.heading);
+            const br = -Math.cos(b.heading), brz = Math.sin(b.heading);
+            let lat = b.vx * br + b.vz * brz;
+            if (Math.abs(lat) > LOCO.maxPassLat) {
+              const fwd = b.vx * bh + b.vz * bz;
+              lat = Math.sign(lat) * LOCO.maxPassLat;
+              b.vx = bh * fwd + br * lat;
+              b.vz = bz * fwd + brz * lat;
+            }
+          }
+        }
+      }
+    }
+    if (iter + 1 < iters) rebuildSpatial(Math.max(r * 1.25, 1.15));
+  }
+}
+
+// ——— Render ———
+function drawGround() {
+  const extent = soldiers.length ? Math.max(30, getMentalLattice(soldiers[0]).maxLat + 10) : 30;
+  const gridEdge = Math.ceil(extent / 5) * 5;
+  // origin cross
+  const o = project(0, 0, 0);
+  if (o) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(233,191,98,.55)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(o.x - 10, o.y); ctx.lineTo(o.x + 10, o.y);
+    ctx.moveTo(o.x, o.y - 10); ctx.lineTo(o.x, o.y + 10);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(233,191,98,.85)';
+    ctx.font = '11px system-ui';
+    ctx.fillText('(0,0)', o.x + 12, o.y - 8);
+    ctx.restore();
+  }
+  // light grid
+  ctx.save();
+  for (let g = -gridEdge; g <= gridEdge; g += 5) {
+    const a1 = project(g, 0, -gridEdge), a2 = project(g, 0, gridEdge);
+    const b1 = project(-gridEdge, 0, g), b2 = project(gridEdge, 0, g);
+    ctx.strokeStyle = g === 0 ? 'rgba(255,255,255,.12)' : 'rgba(255,255,255,.05)';
+    ctx.lineWidth = 1;
+    if (a1 && a2) { ctx.beginPath(); ctx.moveTo(a1.x, a1.y); ctx.lineTo(a2.x, a2.y); ctx.stroke(); }
+    if (b1 && b2) { ctx.beginPath(); ctx.moveTo(b1.x, b1.y); ctx.lineTo(b2.x, b2.y); ctx.stroke(); }
+  }
+  ctx.restore();
+}
+
+function drawSoldier(s, simple) {
+  const p = project(s.x, 0, s.z);
+  if (!p) return;
+  let col = '#8fd0ff';
+  if (s.drill === PHASE.MUSTER) col = '#c48cff';
+  else if (s.drill === PHASE.FORM) col = s.needMove ? '#8fd0ff' : '#6eb8e8';
+  else if (s.drill === PHASE.DRESS) col = s.holding ? '#5ad4a0' : '#7ddea8';
+  else if (s.drill === PHASE.MARCH) col = '#f2c46d';
+  else if (s.drill === PHASE.FIGHT) col = '#ff806f';
+  else if (s.drill === PHASE.TESTUDO) col = s.holding ? '#91a4b7' : '#b4c2cf';
+  else col = '#ffd166';
+  const rad = simple ? Math.max(1.2, cfg.bodyR * p.s * 0.35) : Math.max(2.5, cfg.bodyR * p.s * 0.55);
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, rad, 0, Math.PI * 2);
+  ctx.fill();
+  const hf = Math.sin(s.heading), hz = Math.cos(s.heading);
+  const markLen = simple ? 0.52 : 0.7;
+  const tip = project(s.x + hf * markLen, 0.1, s.z + hz * markLen);
+  if (tip) {
+    ctx.strokeStyle = simple ? 'rgba(255,255,255,.62)' : 'rgba(255,255,255,.85)';
+    ctx.lineWidth = simple ? 0.8 : 1.2;
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+    ctx.lineTo(tip.x, tip.y);
+    ctx.stroke();
+  }
+}
+
+function drawTargets(simple) {
+  if (!cfg.showTargets) return;
+  for (const s of soldiers) {
+    if (s.drill === PHASE.MUSTER || s.beliefSi < 0) continue;
+    const p = project(s.targetX, 0.05, s.targetZ);
+    const m = project(s.x, 0.1, s.z);
+    if (!p || !m) continue;
+    ctx.save();
+    ctx.globalAlpha = 0.45;
+    ctx.fillStyle = '#8fd0ff';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+    if (!simple) {
+      ctx.strokeStyle = 'rgba(143,208,255,.35)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(m.x, m.y);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+function render() {
+  updateCamera();
+  ctx.fillStyle = '#12141a';
+  ctx.fillRect(0, 0, innerWidth, innerHeight);
+  const g = ctx.createLinearGradient(0, 0, 0, innerHeight * 0.5);
+  g.addColorStop(0, '#1a2030');
+  g.addColorStop(1, '#12141a');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, innerWidth, innerHeight * 0.55);
+  drawGround();
+  if (cfg.showTargets) drawTargets(soldiers.length > 220);
+  const simple = soldiers.length > 180;
+  // Depth sort only when needed (small N); large N: unsorted draw is fine for discs
+  if (soldiers.length < 220) {
+    const order = [];
+    for (let i = 0; i < soldiers.length; i++) {
+      const s = soldiers[i];
+      const p = project(s.x, 0, s.z);
+      if (p) order.push({ s, p });
+    }
+    order.sort((a, b) => b.p.z - a.p.z);
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    for (let i = 0; i < order.length; i++) drawSoldier(order[i].s, simple);
+    ctx.restore();
+  } else {
+    ctx.save();
+    ctx.globalAlpha = 0.88;
+    for (let i = 0; i < soldiers.length; i++) drawSoldier(soldiers[i], true);
+    ctx.restore();
+  }
+}
+
+function updateHud() {
+  const n = soldiers.length || 1;
+  let spSum = 0, near = 0, hold = 0;
+  let nMuster = 0, nForm = 0, nDress = 0, nMarch = 0, nFight = 0, nFlee = 0, nTestudo = 0;
+  let cycling = 0;
+  const arriveR = cfg.spacing * MIND.arrive;
+  for (const s of soldiers) {
+    spSum += s.speed;
+    if (s.drill !== PHASE.MUSTER && s.slotDist < arriveR * 1.2) near++;
+    if (s.holding) hold++;
+    if (s.drill === PHASE.MUSTER) nMuster++;
+    else if (s.drill === PHASE.FORM) nForm++;
+    else if (s.drill === PHASE.DRESS) nDress++;
+    else if (s.drill === PHASE.MARCH) nMarch++;
+    else if (s.drill === PHASE.FIGHT) nFight++;
+    else if (s.drill === PHASE.TESTUDO) nTestudo++;
+    else nFlee++;
+    if (s.relief12) cycling++;
+  }
+  document.getElementById('shape').textContent = cfg.shape;
+  {
+    let deg = Math.round(cfg.unitFacing * 180 / Math.PI);
+    while (deg < 0) deg += 360;
+    while (deg >= 360) deg -= 360;
+    const fl = document.getElementById('faceLab');
+    if (fl) fl.textContent = deg + '°';
+  }
+  document.getElementById('spd').textContent = (spSum / n).toFixed(2);
+  document.getElementById('near').textContent = Math.round(100 * near / n) + '%';
+  document.getElementById('hold').textContent = Math.round(100 * hold / n) + '%';
+  document.getElementById('nMuster').textContent = nMuster;
+  document.getElementById('nForm').textContent = nForm;
+  document.getElementById('nDress').textContent = nDress;
+  document.getElementById('nMarch').textContent = nMarch;
+  document.getElementById('nFight').textContent = nFight;
+  document.getElementById('nFlee').textContent = nFlee;
+  document.getElementById('nTestudo').textContent = nTestudo;
+  document.getElementById('cycles').textContent = reliefCyclesCompleted12;
+  document.getElementById('cycling').textContent = cycling;
+  document.getElementById('cycleAvg').textContent = reliefCyclesCompleted12
+    ? (reliefCycleSeconds12 / reliefCyclesCompleted12).toFixed(1)
+    : '—';
+  const msEl = document.getElementById('ms');
+  if (msEl) msEl.textContent = _frameMs.toFixed(1);
+}
+
+// Observer-only instrumentation. It never feeds back into a soldier's mind or
+// motion and exists so seeded scenarios can be regression-tested headlessly.
+function diagnostics() {
+  const n = soldiers.length;
+  const arriveR = cfg.spacing * MIND.arrive;
+  let dressed = 0, forming = 0, mustering = 0, fighting = 0, fleeing = 0, nearPost = 0, holding = 0;
+  let minGap = Infinity, overlaps = 0, postError = 0, radiusSum = 0, maxRadius = 0;
+  let maxPostError = 0, displacedDress = 0, crossAssignments = 0, slotSwitches = 0, blocked = 0;
+  let searchSum = 0, maxSearchRadius = 0, noSlotAgents = 0;
+  let wiggleCount = 0, routing = 0;
+  const occupied = new Map();
+  const L = n ? getMentalLattice(soldiers[0]) : null;
+  for (let i = 0; i < n; i++) {
+    const s = soldiers[i];
+    if (s.drill === PHASE.DRESS) dressed++;
+    else if (s.drill === PHASE.FORM) forming++;
+    else if (s.drill === PHASE.MUSTER) mustering++;
+    else if (s.drill === PHASE.FIGHT) fighting++;
+    else fleeing++;
+    const formationActive = s.drill === PHASE.FORM || s.drill === PHASE.DRESS;
+    if (formationActive && s.slotDist < arriveR * 1.2) nearPost++;
+    if (s.holding) holding++;
+    if (formationActive) postError += s.slotDist;
+    if (formationActive) maxPostError = Math.max(maxPostError, s.slotDist);
+    if (s.drill === PHASE.DRESS && s.slotDist > arriveR * 1.2) displacedDress++;
+    if ((s.blockedT || 0) > 0.8) blocked++;
+    slotSwitches += s.slotSwitches || 0;
+    wiggleCount += s.wiggleCount || 0;
+    if (s.drill === PHASE.FORM && s.routeStage === 0) routing++;
+    if (s.drill === PHASE.FORM) {
+      searchSum += s.searchRadius;
+      maxSearchRadius = Math.max(maxSearchRadius, s.searchRadius);
+      if (s.noSlotT > 0.5) noSlotAgents++;
+    }
+    const radius = Math.hypot(s.x, s.z);
+    radiusSum += radius;
+    maxRadius = Math.max(maxRadius, radius);
+    if (L) {
+      if (s.beliefSi >= 0 && Math.abs(s.sectorLat) > L.sp * 1.25 &&
+          s.sectorLat * L.slots[s.beliefSi].lat < -L.sp * L.sp) crossAssignments++;
+      const seat = nearestSeat(s.x, s.z, L, arriveR * 1.2);
+      if (seat >= 0) occupied.set(seat, (occupied.get(seat) || 0) + 1);
+    }
+    for (let j = i + 1; j < n; j++) {
+      const o = soldiers[j];
+      const d = Math.hypot(s.x - o.x, s.z - o.z);
+      if (d < minGap) minGap = d;
+      if (d < cfg.bodyR * 2 - 1e-3) overlaps++;
+    }
+  }
+
+  let duplicatePosts = 0;
+  for (const count of occupied.values()) if (count > 1) duplicatePosts += count - 1;
+  return {
+    n, mustering, forming, dressed, fighting, fleeing, nearPost, holding,
+    dressedFraction: n ? dressed / n : 0,
+    nearPostFraction: n ? nearPost / n : 0,
+    meanPostError: (forming + dressed) ? postError / (forming + dressed) : 0,
+    maxPostError, displacedDress, crossAssignments, slotSwitches, wiggleCount, blocked, routing,
+    meanSearchRadius: forming ? searchSum / forming : 0,
+    maxSearchRadius, noSlotAgents,
+    meanRadius: n ? radiusSum / n : 0,
+    maxRadius,
+    minGap: Number.isFinite(minGap) ? minGap : 0,
+    overlaps, duplicatePosts, seed: cfg.seed >>> 0
+  };
+}
+
+// ==========================================================================
+/*
+ * Compact 2-D ORCA/RVO2 velocity solver for an x/z ground plane.
+ *
+ * The solver deliberately senses only a neighbor's position, visible velocity,
+ * and publicState.  Targets, claims, timers, and other private controller state
+ * are neither needed nor read here.  Supply a local-neighbor array; broad-phase
+ * neighbor lookup remains the caller's job.
+ *
+ * Browser:  const next = ORCA2D.solvePreferredVelocity(...)
+ * Node:     const ORCA2D = require('./orca_helpers.js')
+ * Pass the physical speed cap to solvePreferredVelocity, not |preferred|;
+ * avoidance may need a velocity with a different direction at the same cap.
+ */
+(function attachORCA2D(root, factory) {
+  const api = factory();
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  if (root) root.ORCA2D = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function makeORCA2D() {
+  'use strict';
+
+  const EPSILON = 1e-7;
+
+  // Small immutable-style vector helpers. Inputs and results use {x, z}.
+  const vec = (x = 0, z = 0) => ({ x, z });
+  const add = (a, b) => vec(a.x + b.x, a.z + b.z);
+  const sub = (a, b) => vec(a.x - b.x, a.z - b.z);
+  const scale = (a, s) => vec(a.x * s, a.z * s);
+  const dot = (a, b) => a.x * b.x + a.z * b.z;
+  const det = (a, b) => a.x * b.z - a.z * b.x;
+  const lengthSq = (a) => dot(a, a);
+  const length = (a) => Math.sqrt(lengthSq(a));
+  const normalize = (a, fallback = vec(1, 0)) => {
+    const m = length(a);
+    return m > EPSILON ? scale(a, 1 / m) : vec(fallback.x, fallback.z);
+  };
+  const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+
+  const Vec = Object.freeze({
+    create: vec, add, sub, scale, dot, det, lengthSq, length, normalize
+  });
+
+  /*
+   * Mobility is avoidance authority, not desired speed.  A mobile agent takes
+   * most of the correction when paired with a publicly holding agent.  Because
+   * a/(a+b) + b/(a+b) = 1, two agents that both run this solver still apply one
+   * complete ORCA correction between them.  Unknown states stay reciprocal.
+   */
+  const DEFAULT_STATE_MOBILITY = Object.freeze({
+    muster: 1.0,
+    form: 1.0,
+    dress: 0.08,
+    march: 1.0,
+    fight: 0.0,
+    flee: 1.0,
+    testudo: 0.22
+  });
+
+  function mobilityForState(publicState, stateMobility = DEFAULT_STATE_MOBILITY) {
+    const state = typeof publicState === 'string' ? publicState.toLowerCase() : publicState;
+    let value;
+    if (typeof stateMobility === 'function') value = stateMobility(state);
+    else if (stateMobility && Object.prototype.hasOwnProperty.call(stateMobility, state)) {
+      value = stateMobility[state];
+    }
+    return Number.isFinite(value) ? Math.max(0, value) : 1;
+  }
+
+  function responsibilityForStates(selfState, otherState, stateMobility) {
+    const mine = mobilityForState(selfState, stateMobility);
+    const theirs = mobilityForState(otherState, stateMobility);
+    const total = mine + theirs;
+    return total > EPSILON ? mine / total : 0.5;
+  }
+
+  function isStaticPublicState(publicState) {
+    const state = typeof publicState === 'string' ? publicState.toLowerCase() : publicState;
+    return state === 'dress' || state === 'fight';
+  }
+
+  function visibleVelocity(agent) {
+    return vec(
+      Number.isFinite(agent.seenVx) ? agent.seenVx : 0,
+      Number.isFinite(agent.seenVz) ? agent.seenVz : 0
+    );
+  }
+
+  function position(agent) {
+    return vec(
+      Number.isFinite(agent.x) ? agent.x : 0,
+      Number.isFinite(agent.z) ? agent.z : 0
+    );
+  }
+
+  /*
+   * Construct one standard RVO2 agent ORCA line. Feasible velocities lie on
+   * the left side of the directed line:
+   *   det(line.direction, line.point - velocity) <= 0.
+   */
+  function makeAgentLine(self, other, options) {
+    const dt = Math.max(EPSILON, Number.isFinite(options.dt) ? options.dt : 1 / 60);
+    const dynamicHorizon = Math.max(EPSILON,
+      Number.isFinite(options.timeHorizon) ? options.timeHorizon : 2.5);
+    const staticHorizon = Math.max(EPSILON,
+      Number.isFinite(options.staticTimeHorizon) ? options.staticTimeHorizon : dynamicHorizon);
+    const staticTest = typeof options.isStaticState === 'function'
+      ? options.isStaticState
+      : isStaticPublicState;
+    // The callback receives only the broadcast state, never the whole neighbor.
+    const horizon = staticTest(other.publicState) ? staticHorizon : dynamicHorizon;
+    const invTimeHorizon = 1 / horizon;
+
+    const radiusOf = typeof options.collisionRadius === 'function'
+      ? options.collisionRadius
+      : (agent) => Number.isFinite(agent.radius) ? agent.radius : 0.5;
+    const padding = Number.isFinite(options.padding) ? Math.max(0, options.padding) : 0;
+    const combinedRadius = Math.max(0, Number(radiusOf(self)) || 0) +
+      Math.max(0, Number(radiusOf(other)) || 0) + padding;
+    const combinedRadiusSq = combinedRadius * combinedRadius;
+
+    const selfVelocity = visibleVelocity(self);
+    const relativePosition = sub(position(other), position(self));
+    const relativeVelocity = sub(selfVelocity, visibleVelocity(other));
+    const distSq = lengthSq(relativePosition);
+    let direction;
+    let u;
+
+    if (distSq > combinedRadiusSq) {
+      // No current overlap: project onto the cutoff circle or either VO leg.
+      const w = sub(relativeVelocity, scale(relativePosition, invTimeHorizon));
+      const wLengthSq = lengthSq(w);
+      const dot1 = dot(w, relativePosition);
+
+      if (dot1 < 0 && dot1 * dot1 > combinedRadiusSq * wLengthSq) {
+        const wLength = Math.sqrt(wLengthSq);
+        const unitW = normalize(w, normalize(scale(relativePosition, -1)));
+        direction = vec(unitW.z, -unitW.x);
+        u = scale(unitW, combinedRadius * invTimeHorizon - wLength);
+      } else {
+        const leg = Math.sqrt(Math.max(0, distSq - combinedRadiusSq));
+        if (det(relativePosition, w) > 0) {
+          direction = scale(vec(
+            relativePosition.x * leg - relativePosition.z * combinedRadius,
+            relativePosition.x * combinedRadius + relativePosition.z * leg
+          ), 1 / distSq);
+        } else {
+          direction = scale(vec(
+            -(relativePosition.x * leg + relativePosition.z * combinedRadius),
+            relativePosition.x * combinedRadius - relativePosition.z * leg
+          ), 1 / distSq);
+        }
+        u = sub(scale(direction, dot(relativeVelocity, direction)), relativeVelocity);
+      }
+    } else {
+      // Current overlap: use the simulation step as the emergency horizon.
+      const invTimeStep = 1 / dt;
+      const w = sub(relativeVelocity, scale(relativePosition, invTimeStep));
+      const wLength = length(w);
+      const fallback = normalize(scale(relativePosition, -1));
+      const unitW = normalize(w, fallback);
+      direction = vec(unitW.z, -unitW.x);
+      u = scale(unitW, combinedRadius * invTimeStep - wLength);
+    }
+
+    const responsibility = typeof options.responsibility === 'function'
+      ? clamp(Number(options.responsibility(self.publicState, other.publicState)) || 0, 0, 1)
+      : responsibilityForStates(self.publicState, other.publicState, options.stateMobility);
+
+    return {
+      point: add(selfVelocity, scale(u, responsibility)),
+      direction: normalize(direction, vec(0, -1)),
+      // Metadata is useful for diagnostics; LP1/2/3 only use point/direction.
+      responsibility,
+      timeHorizon: horizon
+    };
+  }
+
+  function buildAgentLines(self, localNeighbors, options = {}) {
+    const lines = [];
+    for (let i = 0; i < localNeighbors.length; i++) {
+      const other = localNeighbors[i];
+      if (!other || other === self) continue;
+      lines.push(makeAgentLine(self, other, options));
+    }
+    return lines;
+  }
+
+  /* RVO2 linearProgram1: solve on a single line while satisfying prior lines. */
+  function linearProgram1(lines, lineNo, radius, optVelocity, directionOpt) {
+    const line = lines[lineNo];
+    const dotProduct = dot(line.point, line.direction);
+    const discriminant = dotProduct * dotProduct + radius * radius - lengthSq(line.point);
+    if (discriminant < 0) return { ok: false, result: vec() };
+
+    const sqrtDiscriminant = Math.sqrt(discriminant);
+    let tLeft = -dotProduct - sqrtDiscriminant;
+    let tRight = -dotProduct + sqrtDiscriminant;
+
+    for (let i = 0; i < lineNo; i++) {
+      const denominator = det(line.direction, lines[i].direction);
+      const numerator = det(lines[i].direction, sub(line.point, lines[i].point));
+
+      if (Math.abs(denominator) <= EPSILON) {
+        if (numerator < 0) return { ok: false, result: vec() };
+        continue;
+      }
+
+      const t = numerator / denominator;
+      if (denominator >= 0) tRight = Math.min(tRight, t);
+      else tLeft = Math.max(tLeft, t);
+      if (tLeft > tRight) return { ok: false, result: vec() };
+    }
+
+    let t;
+    if (directionOpt) {
+      t = dot(optVelocity, line.direction) > 0 ? tRight : tLeft;
+    } else {
+      t = clamp(dot(line.direction, sub(optVelocity, line.point)), tLeft, tRight);
+    }
+    return { ok: true, result: add(line.point, scale(line.direction, t)) };
+  }
+
+  /* RVO2 linearProgram2: closest feasible velocity inside the speed circle. */
+  function linearProgram2(lines, radius, optVelocity, directionOpt = false) {
+    radius = Math.max(0, radius);
+    let result;
+    if (directionOpt) {
+      result = scale(normalize(optVelocity), radius);
+    } else if (lengthSq(optVelocity) > radius * radius) {
+      result = scale(normalize(optVelocity), radius);
+    } else {
+      result = vec(optVelocity.x, optVelocity.z);
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      if (det(lines[i].direction, sub(lines[i].point, result)) > 0) {
+        const previous = result;
+        const solved = linearProgram1(lines, i, radius, optVelocity, directionOpt);
+        if (!solved.ok) return { result: previous, failedLine: i };
+        result = solved.result;
+      }
+    }
+    return { result, failedLine: lines.length };
+  }
+
+  /*
+   * RVO2 linearProgram3: repair the residual when the speed circle and all
+   * half-planes have no common point. numObstacleLines is zero for this
+   * agent-only helper, but is retained so static obstacle lines can be prepended.
+   */
+  function linearProgram3(lines, numObstacleLines, beginLine, radius, initialResult) {
+    let result = vec(initialResult.x, initialResult.z);
+    let distance = 0;
+
+    for (let i = beginLine; i < lines.length; i++) {
+      const violation = det(lines[i].direction, sub(lines[i].point, result));
+      if (violation <= distance) continue;
+
+      const projectedLines = lines.slice(0, numObstacleLines);
+      for (let j = numObstacleLines; j < i; j++) {
+        const determinant = det(lines[i].direction, lines[j].direction);
+        let point;
+        if (Math.abs(determinant) <= EPSILON) {
+          if (dot(lines[i].direction, lines[j].direction) > 0) continue;
+          point = scale(add(lines[i].point, lines[j].point), 0.5);
+        } else {
+          const t = det(lines[j].direction, sub(lines[i].point, lines[j].point)) /
+            determinant;
+          point = add(lines[i].point, scale(lines[i].direction, t));
+        }
+        projectedLines.push({
+          point,
+          direction: normalize(sub(lines[j].direction, lines[i].direction))
+        });
+      }
+
+      const previous = result;
+      const perpendicular = vec(-lines[i].direction.z, lines[i].direction.x);
+      const solved = linearProgram2(projectedLines, radius, perpendicular, true);
+      // Floating-point failure: preserve the best result obtained so far.
+      if (solved.failedLine < projectedLines.length) result = previous;
+      else result = solved.result;
+      distance = det(lines[i].direction, sub(lines[i].point, result));
+    }
+    return result;
+  }
+
+  function solvePreferredVelocity(self, localNeighbors, preferredVelocity, maxSpeed, options = {}) {
+    const lines = buildAgentLines(self, localNeighbors, options);
+    const preferred = vec(
+      Number.isFinite(preferredVelocity.x) ? preferredVelocity.x : 0,
+      Number.isFinite(preferredVelocity.z) ? preferredVelocity.z : 0
+    );
+    const speed = Math.max(0, Number(maxSpeed) || 0);
+    const lp2 = linearProgram2(lines, speed, preferred, false);
+    const velocity = lp2.failedLine < lines.length
+      ? linearProgram3(lines, 0, lp2.failedLine, speed, lp2.result)
+      : lp2.result;
+    return {
+      x: velocity.x,
+      z: velocity.z,
+      lines,
+      failedLine: lp2.failedLine
+    };
+  }
+
+  const api = Object.freeze({
+    EPSILON,
+    Vec,
+    DEFAULT_STATE_MOBILITY,
+    mobilityForState,
+    responsibilityForStates,
+    isStaticPublicState,
+    makeAgentLine,
+    buildAgentLines,
+    buildOrcaLines: buildAgentLines,
+    linearProgram1,
+    linearProgram2,
+    linearProgram3,
+    lp1: linearProgram1,
+    lp2: linearProgram2,
+    lp3: linearProgram3,
+    solvePreferredVelocity,
+    solve: solvePreferredVelocity
+  });
+
+  return api;
+});
+
+// v15 controller — distributed claims, ordered maneuvers, continuous local reflow
+// ==========================================================================
+const V12 = Object.freeze({
+  thinkEvery: 0.08,
+  musterTime: 0.15,
+  // A moving man's direction/pointing is legible across roughly thirty metres
+  // in open order.  Detailed FSM/body-language awareness remains 5.5 m.
+  claimR: 27.0,
+  socialR: 5.5,
+  searchStart: 10.0,
+  conflictHold: 0.04,
+  dressTol: 0.065,
+  dressHold: 0.14,
+  neighborR: 5.5,
+  timeHorizon: 0.92,
+  staticHorizon: 0.78,
+  safePad: 0.01,
+  accel: 4.0
+});
+
+let v12SimTime = 0;
+let v12CompletionTime = null;
+let v12StrictHold = 0;
+let reliefCyclesCompleted12 = 0;
+let reliefCycleSeconds12 = 0;
+let reliefCycleMax12 = 0;
+const casualtyEvents12 = [];
+
+function initV12(s, force) {
+  if (s.v12Ready && !force) return;
+  const L = getMentalLattice(s);
+  const spawnR = Math.hypot(s.x - ANCHOR.x, s.z - ANCHOR.z);
+  if (s.entryDepthNorm == null) {
+    s.entryDepthNorm = clamp(((spawnR - 8) / 20) * 2 - 1, -1, 1);
+  }
+  // Equal-probability bins map personal approach bearing/range across every
+  // file and rank.  This is self-sorting from what the man knows about his own
+  // approach, not an assignment made from anybody else's state.
+  s.homeFile12 = clamp(Math.floor((s.entrySideNorm + 1) * 0.5 * L.cols), 0, L.cols - 1);
+  s.homeRow12 = clamp(Math.floor((s.entryDepthNorm + 1) * 0.5 * L.rows), 0, L.rows - 1);
+  s.prefLat12 = (s.homeFile12 - (L.cols - 1) * 0.5) * L.sp;
+  s.prefDep12 = ((L.rows - 1) * 0.5 - s.homeRow12) * L.sp;
+  s.claimSi12 = -1;
+  s.publicClaimX12 = s.nextClaimX12 = s.x;
+  s.publicClaimZ12 = s.nextClaimZ12 = s.z;
+  s.publicClaimActive12 = s.nextClaimActive12 = false;
+  s.claimAge12 = 0;
+  s.publicClaimAge12 = s.nextClaimAge12 = 0;
+  s.publicGapX12 = s.nextGapX12 = s.x;
+  s.publicGapZ12 = s.nextGapZ12 = s.z;
+  s.publicGapActive12 = s.nextGapActive12 = false;
+  s.publicGapHops12 = s.nextGapHops12 = 0;
+  s.publicGapLife12 = s.nextGapLife12 = 0;
+  s.redressing12 = false;
+  s.redressCount12 = 0;
+  s.tabuUntil12 = new Float64Array(L.nSlots);
+  s.claimLosses12 = 0;
+  s.conflictT12 = 0;
+  s.arriveT12 = 0;
+  s.thinkT12 = rand(0, V12.thinkEvery);
+  s.mindElapsed12 = 0;
+  s.phaseTime12 = 0;
+  s.orderAge12 = 0;
+  s.wpT12 = 0;
+  s.wpX12 = s.x;
+  s.wpZ12 = s.z;
+  s.portalActive12 = false;
+  s.portalX12 = s.x;
+  s.portalZ12 = s.z;
+  s.routeStage12 = 0;
+  s.routeGateLat12 = 0;
+  s.routeApronDep12 = 0;
+  s.scouting12 = false;
+  s.scoutDir12 = hash01(s.id, 0x5c0, 12) < 0.5 ? -1 : 1;
+  s.plannedVx12 = 0;
+  s.plannedVz12 = 0;
+  s.claimSwitches12 = 0;
+  s.orderedFacing12 = cfg.unitFacing;
+  s.maneuver12 = null;
+  s.maneuverElapsed12 = 0;
+  s.maneuverArrive12 = 0;
+  s.microMove12 = false;
+  s.microFromSi12 = -1;
+  s.microMoveStarted12 = 0;
+  s.compressionMoves12 = 0;
+  s.compressionWaveT12 = 0;
+  s.publicCompressionActive12 = s.nextCompressionActive12 = false;
+  s.microGapSi12 = -1;
+  s.microGapT12 = 0;
+  s.microGapKind12 = 'none';
+  s.microMoveKind12 = 'none';
+  s.seatEverSeen12 = new Uint8Array(L.nSlots);
+  s.everDressed12 = false;
+  s.fatigue12 = 6 + hash01(s.id, 0xfa7, 14) * 8;
+  s.fatigueEnabled12 = false;
+  s.reliefCount12 = 0;
+  s.relief12 = null;
+  s.publicReliefActive12 = s.nextReliefActive12 = false;
+  s.publicReliefX12 = s.nextReliefX12 = s.x;
+  s.publicReliefZ12 = s.nextReliefZ12 = s.z;
+  s.testudoSettled12 = false;
+  s.preTestudoDoctrine12 = null;
+  s.testudoDelay12 = 0;
+  s.testudoRouteStage12 = 0;
+  s.testudoStuckT12 = 0;
+  s.testudoLastDist12 = Infinity;
+  s.drill = PHASE.MUSTER;
+  s.publicState = s.nextPublicState = PHASE.MUSTER;
+  s.beliefSi = -1;
+  s.slotDist = 0;
+  s.braced = false;
+  s.v12Ready = true;
+}
+
+function setPhase12(s, phase) {
+  if (s.drill === phase) return;
+  s.drill = phase;
+  s.nextPublicState = phase;
+  s.phaseTime12 = 0;
+  s.drillTime = 0;
+  s.arriveT12 = 0;
+  if (phase === PHASE.DRESS || phase === PHASE.FIGHT || phase === PHASE.TESTUDO) s.braced = true;
+  else s.braced = false;
+  if (phase === PHASE.DRESS) s.everDressed12 = true;
+  if (phase === PHASE.FLEE || phase === PHASE.MUSTER) {
+    s.nextClaimActive12 = false;
+  }
+}
+
+// Stable, locally-computable eye-contact tie break.  A man already at the post
+// keeps it; otherwise both men reach the same answer from public identity and
+// position.  Crucially, the winner cannot flip every frame as two men race.
+function claimWinner12(a, b, tx, tz, si) {
+  const ad = Math.hypot(a.x - tx, a.z - tz);
+  const bd = Math.hypot(b.x - tx, b.z - tz);
+  const L = getMentalLattice(a);
+  const settled = L.sp * 0.55;
+  // Seniority belongs to the visibly signalled post, not to the man in the
+  // abstract.  A stale gesture from a just-lost post cannot confer priority
+  // when he considers an unrelated vacancy.
+  const aAtSeat = a.publicClaimActive12 &&
+    nearestSeat(a.publicClaimX12, a.publicClaimZ12, L, L.sp * 0.38) === si;
+  const bAtSeat = b.publicClaimActive12 &&
+    nearestSeat(b.publicClaimX12, b.publicClaimZ12, L, L.sp * 0.38) === si;
+  const aa = aAtSeat && Number.isFinite(a.publicClaimAge12) ? a.publicClaimAge12 : 0;
+  const ba = bAtSeat && Number.isFinite(b.publicClaimAge12) ? b.publicClaimAge12 : 0;
+  if (aa > ba + 0.12) return a;
+  if (ba > aa + 0.12) return b;
+  if (ad <= settled && bd > settled) return a;
+  if (bd <= settled && ad > settled) return b;
+  const ap = hash01(a.id, si, 0x51a7);
+  const bp = hash01(b.id, si, 0x51a7);
+  return ap < bp || (ap === bp && a.id < b.id) ? a : b;
+}
+
+function visible12(s, radius) {
+  queryNear(s.x, s.z, radius, s);
+  const out = new Array(_nearBuf.length);
+  for (let i = 0; i < _nearBuf.length; i++) {
+    const o = _nearBuf[i];
+    // Immutable-by-construction public percept: cognition and motion cannot
+    // accidentally read another man's target, belief, route, or timers.
+    const localSocial = Math.hypot(o.x - s.x, o.z - s.z) <= V12.socialR;
+    const overtMobile = !!(o.relief12 || o.microMove12 || o.maneuver12 ||
+      (o.drill === PHASE.TESTUDO && !o.testudoSettled12));
+    out[i] = {
+      id: o.id, x: o.x, z: o.z,
+      seenVx: o.seenVx, seenVz: o.seenVz, speed: o.seenSpeed,
+      // Exact FSM/posture is a close social cue.  At longer visual range only
+      // gross motion and deliberate pointing/claim gestures are legible.
+      publicState: localSocial ? (overtMobile ? PHASE.MARCH : o.publicState) : null,
+      plantedAtPost: !!(o.braced && o.holding && !overtMobile),
+      publicClaimActive12: o.publicClaimActive12,
+      publicClaimX12: o.publicClaimX12,
+      publicClaimZ12: o.publicClaimZ12,
+      publicClaimAge12: o.publicClaimAge12,
+      publicGapActive12: o.publicGapActive12,
+      publicGapX12: o.publicGapX12,
+      publicGapZ12: o.publicGapZ12,
+      publicGapHops12: o.publicGapHops12,
+      publicGapLife12: o.publicGapLife12,
+      publicReliefActive12: localSocial && o.publicReliefActive12,
+      publicReliefX12: o.publicReliefX12,
+      publicReliefZ12: o.publicReliefZ12,
+      publicCompressionActive12: localSocial && o.publicCompressionActive12
+    };
+  }
+  return out;
+}
+
+// Contact physics needs body references; it is deliberately separate from
+// the percept function above and never participates in agent decisions.
+function bodiesNear12(s, radius) {
+  queryNear(s.x, s.z, radius, s);
+  return _nearBuf.slice();
+}
+
+function observedClaimSeat12(o, L) {
+  if (!o.publicClaimActive12) return -1;
+  return nearestSeat(o.publicClaimX12, o.publicClaimZ12, L, L.sp * 0.38);
+}
+
+function takeClaim12(s, L, si) {
+  if (si < 0 || si >= L.nSlots) return false;
+  s.claimSi12 = si;
+  s.beliefSi = si;
+  s.targetX = L.wx[si]; s.targetZ = L.wz[si];
+  s.nextClaimX12 = s.targetX; s.nextClaimZ12 = s.targetZ;
+  s.nextClaimActive12 = true;
+  s.claimAge12 = 0; s.nextClaimAge12 = 0;
+  s.conflictT12 = 0;
+  s.scouting12 = false;
+  s.portalActive12 = false;
+  return true;
+}
+
+function chooseClaim12(s, L, vis) {
+  const nSlots = L.nSlots;
+  if (!s.tabuUntil12 || s.tabuUntil12.length !== nSlots) s.tabuUntil12 = new Float64Array(nSlots);
+  const blocked = new Uint8Array(nSlots);
+  const cued = new Uint8Array(nSlots);
+  const bodyHere = new Uint8Array(nSlots);
+  const dressR = L.sp * 0.48;
+  for (let k = 0; k < vis.length; k++) {
+    const o = vis[k];
+    const body = nearestSeat(o.x, o.z, L, L.sp * 0.38);
+    if (body >= 0) bodyHere[body] = 1;
+    // A planted posture physically covering a known post is visible without
+    // knowing his exact FSM state at long range.
+    if (o.plantedAtPost) {
+      const seat = nearestSeat(o.x, o.z, L, dressR);
+      if (seat >= 0) blocked[seat] = 1;
+    }
+    const claim = observedClaimSeat12(o, L);
+    if (claim >= 0) {
+      if (claimWinner12(s, o, L.wx[claim], L.wz[claim], claim) === o) blocked[claim] = 1;
+    }
+    if (o.publicGapActive12) {
+      const gap = nearestSeat(o.publicGapX12, o.publicGapZ12, L, L.sp * 0.38);
+      if (gap >= 0 && Math.hypot(L.wx[gap] - s.x, L.wz[gap] - s.z) <= V12.claimR) {
+        // In the late scrum a pointing cue is socially addressed, not a
+        // broadcast command to every man who can see it.  A short attention
+        // epoch approximates eye contact; epochs change so no hole is ignored
+        // forever, while simultaneous herding becomes uncommon.
+        const cueEpoch = Math.floor(s.phaseTime12 / 0.70);
+        if (s.claimLosses12 < 4 || hash01(s.id, gap, 0xc0e + cueEpoch) < 0.38) {
+          cued[gap] = 1;
+        }
+      }
+    }
+  }
+
+  const searchR = Math.min(V12.claimR * 0.92,
+    V12.searchStart + s.phaseTime12 * 0.55 + s.claimLosses12 * 0.45);
+  let best = -1, bestCost = Infinity;
+  {
+    const useR = searchR;
+    for (let si = 0; si < nSlots; si++) {
+      if (blocked[si] || s.tabuUntil12[si] > v12SimTime) continue;
+      const dx = L.wx[si] - s.x, dz = L.wz[si] - s.z;
+      const travel = Math.hypot(dx, dz);
+      const sl = L.slots[si];
+      const pref = Math.hypot(sl.lat - s.prefLat12, (sl.dep - s.prefDep12) * 0.78);
+      const seenEmpty = travel <= V12.socialR * 0.92 && !bodyHere[si];
+      const desperateLocal = s.claimLosses12 >= 4 && seenEmpty;
+      // Before scouting, expansion is around my own home sector, even when a
+      // wide formation places that sector beyond my current visual bubble.
+      // During a physical sweep I may only claim an actually local seat.
+      if (s.scouting12 ? travel > useR : (pref > useR && !cued[si] && !desperateLocal)) continue;
+      const crosses = Math.abs(s.prefLat12) > L.sp * 1.2 && s.prefLat12 * sl.lat < -L.sp * L.sp;
+      const urgency = clamp((useR - V12.searchStart) / Math.max(1, V12.claimR - V12.searchStart), 0, 1);
+      const crossCost = crosses ? L.sp * 7 * (1 - urgency * 0.9) : 0;
+      // After a proven loss, decorrelate nearby losers instead of making all
+      // of them try the same next-nearest chair.  Randomness is private and
+      // deterministic; locality remains the dominant term.
+      const saltScale = s.claimLosses12 > 0
+        ? 4.8 + Math.min(5, s.claimLosses12) * 0.55
+        : 0.08;
+      const salt = hash01(s.id, si, 197 + s.claimLosses12) * L.sp * saltScale;
+      const cueBonus = cued[si] ? L.sp * 100 : 0;
+      // Four witnessed losses are enough evidence that my local mental
+      // picture is stale.  Stop speculative re-bidding and physically scout
+      // until a nearby man points out a hole or I can directly see an empty
+      // post.  Absence is trusted only inside close social/perceptual range.
+      if (s.claimLosses12 >= 4 && !cued[si] && !seenEmpty) continue;
+      const localEmptyBonus = desperateLocal ? L.sp * 8 : 0;
+      const cost = travel * 0.72 + pref * 0.62 + crossCost + salt - cueBonus - localEmptyBonus;
+      if (cost < bestCost) { bestCost = cost; best = si; }
+    }
+  }
+  if (best >= 0) {
+    if (s.claimSi12 >= 0 && s.claimSi12 !== best) s.claimSwitches12++;
+    s.claimSi12 = best;
+    s.beliefSi = best;
+    s.targetX = L.wx[best];
+    s.targetZ = L.wz[best];
+    if (s.claimLosses12 > 0 && s.phaseTime12 > 100.0) {
+      const { lat, dep } = formationCoords(s.x, s.z, L);
+      const targetLat = L.slots[best].lat;
+      if (Math.abs(targetLat - lat) > L.sp * 2.0) {
+        const rear = -((L.rows - 1) * L.sp * 0.5 + L.sp * 1.45);
+        // Fixed formation-coordinate lanes: right-going traffic uses the
+        // outer apron, left-going traffic the inner apron.
+        s.routeGateLat12 = lat;
+        s.routeApronDep12 = rear - (targetLat > lat ? L.sp * 0.72 : 0);
+        s.routeStage12 = dep > s.routeApronDep12 + 0.35 ? 1 : 2;
+      } else s.routeStage12 = 0;
+    } else s.routeStage12 = 0;
+    s.nextClaimX12 = s.targetX;
+    s.nextClaimZ12 = s.targetZ;
+    s.nextClaimActive12 = true;
+    s.claimAge12 = 0;
+    s.nextClaimAge12 = 0;
+    s.conflictT12 = 0;
+    s.scouting12 = false;
+    s.portalActive12 = false;
+  }
+  return best;
+}
+
+function updateScoutTarget12(s, L, vis) {
+  s.nextClaimActive12 = false;
+  const { lat, dep } = formationCoords(s.x, s.z, L);
+  if (!s.scouting12) {
+    if (Math.abs(s.prefLat12) > L.sp * 0.75) {
+      const outermost = Math.abs(s.prefLat12) > L.maxLat * 0.85;
+      s.scoutDir12 = (outermost ? 1 : -1) * Math.sign(s.prefLat12);
+    }
+    else s.scoutDir12 = hash01(s.id, 0x5c0, 12) < 0.5 ? -1 : 1;
+  }
+  s.scouting12 = true;
+  // Direction-separated one-way apron lanes eliminate counterflow.
+  const lane = s.scoutDir12 > 0 ? 1 : 0;
+  const rear = -((L.rows - 1) * L.sp * 0.5 + L.sp * (1.35 + lane * 0.72));
+  if (Math.abs(dep - rear) > 0.42) {
+    const p = formationWorld(lat, rear, L);
+    s.targetX = p.x;
+    s.targetZ = p.z;
+  } else {
+    if (lat > L.maxLat + L.sp * 0.5) s.scoutDir12 = -1;
+    if (lat < -L.maxLat - L.sp * 0.5) s.scoutDir12 = 1;
+    const edge = s.scoutDir12 > 0 ? L.maxLat + L.sp : -L.maxLat - L.sp;
+    const p = formationWorld(edge, rear, L);
+    s.targetX = p.x;
+    s.targetZ = p.z;
+  }
+  s.slotDist = Math.hypot(s.x - s.targetX, s.z - s.targetZ);
+  s.needMove = true; s.holding = false; s.braced = false;
+}
+
+function findGapCue12(s, L, vis) {
+  if (s.claimSi12 < 0) return -1;
+  const occupied = new Uint8Array(L.nSlots);
+  occupied[s.claimSi12] = 1;
+  for (const o of vis) {
+    const body = nearestSeat(o.x, o.z, L, L.sp * 0.48);
+    if (body >= 0 && o.plantedAtPost) occupied[body] = 1;
+    const claim = observedClaimSeat12(o, L);
+    if (claim >= 0) occupied[claim] = 1;
+  }
+  const mine = L.slots[s.claimSi12];
+  let best = -1, bestCost = Infinity;
+  for (let dr = -2; dr <= 2; dr++) {
+    for (let dc = -4; dc <= 4; dc++) {
+      const r = mine.r + dr, c = mine.c + dc;
+      if (r < 0 || c < 0 || r >= L.rows || c >= L.cols) continue;
+      const si = r * L.cols + c;
+      if (occupied[si]) continue;
+      const d = Math.hypot(L.wx[si] - s.x, L.wz[si] - s.z);
+      if (d > V12.claimR * 0.92) continue;
+      // Different men naturally advertise different nearby holes.
+      const cost = d + hash01(s.id, si, 0x6a9) * L.sp * 1.8;
+      if (cost < bestCost) { bestCost = cost; best = si; }
+    }
+  }
+  return best;
+}
+
+function claimConflict12(s, L, vis) {
+  if (s.claimSi12 < 0) return false;
+  const si = s.claimSi12;
+  const tx = L.wx[si], tz = L.wz[si];
+  for (let k = 0; k < vis.length; k++) {
+    const o = vis[k];
+    const dSeat = Math.hypot(o.x - tx, o.z - tz);
+    if (o.plantedAtPost && dSeat < L.sp * 0.5) return true;
+    const otherClaim = observedClaimSeat12(o, L);
+    if (otherClaim === si && claimWinner12(s, o, tx, tz, si) === o) return true;
+  }
+  return false;
+}
+
+function resetClaimMemory12(s, L) {
+  s.tabuUntil12 = new Float64Array(L.nSlots);
+  s.claimLosses12 = 0;
+  s.conflictT12 = 0;
+  s.arriveT12 = 0;
+  s.redressing12 = false;
+  s.redressCount12 = 0;
+  s.seatEverSeen12 = new Uint8Array(L.nSlots);
+  s.homeFile12 = clamp(Math.floor((s.entrySideNorm + 1) * 0.5 * L.cols), 0, L.cols - 1);
+  s.homeRow12 = clamp(Math.floor((s.entryDepthNorm + 1) * 0.5 * L.rows), 0, L.rows - 1);
+  s.prefLat12 = (s.homeFile12 - (L.cols - 1) * 0.5) * L.sp;
+  s.prefDep12 = ((L.rows - 1) * 0.5 - s.homeRow12) * L.sp;
+}
+
+function hearManeuverOrder12(s, order) {
+  if (s.claimSi12 < 0 || s.drill === PHASE.MUSTER || s.drill === PHASE.FLEE) return false;
+  const L = getMentalLattice(s);
+  const startFacing = s.doctrine.formFacing;
+  const startAnchorX = s.doctrine.anchorX || 0;
+  const startAnchorZ = s.doctrine.anchorZ || 0;
+  const m = {
+    kind: order.kind,
+    elapsed: 0,
+    duration: order.duration,
+    startFacing,
+    startAnchorX,
+    startAnchorZ,
+    deltaAngle: order.deltaAngle || 0,
+    deltaX: 0,
+    deltaZ: 0,
+    backwards: !!order.backwards,
+    resumeState: s.drill === PHASE.FIGHT ? PHASE.FIGHT :
+      (s.drill === PHASE.TESTUDO ? PHASE.TESTUDO : PHASE.DRESS),
+    pivotLat: order.pivotLat,
+    pivotDep: order.pivotDep,
+    pivotX: 0,
+    pivotZ: 0,
+    pathDone: false
+  };
+  if (order.distance) {
+    const axes = facingVectors(startFacing);
+    m.deltaX = axes.fwd.x * order.distance;
+    m.deltaZ = axes.fwd.z * order.distance;
+  }
+  if (Number.isFinite(m.pivotLat) && Number.isFinite(m.pivotDep)) {
+    const p = formationWorld(m.pivotLat, m.pivotDep, L);
+    m.pivotX = p.x; m.pivotZ = p.z;
+  }
+  s.maneuver12 = m;
+  s.maneuverElapsed12 = 0;
+  s.maneuverArrive12 = 0;
+  s.microMove12 = false;
+  s.testudoSettled12 = false;
+  s.testudoRouteStage12 = 0;
+  s.testudoStuckT12 = 0;
+  s.testudoLastDist12 = Infinity;
+  s.braced = false; s.holding = false; s.needMove = true;
+  if (s.drill !== PHASE.TESTUDO) setPhase12(s, PHASE.MARCH);
+  return true;
+}
+
+function advanceManeuver12(s, mdt) {
+  const m = s.maneuver12;
+  if (!m) return false;
+  m.elapsed += mdt;
+  s.maneuverElapsed12 = m.elapsed;
+  const p = clamp(m.elapsed / Math.max(0.01, m.duration), 0, 1);
+  const face = wrapAngle(m.startFacing + m.deltaAngle * p);
+  let ax = m.startAnchorX + m.deltaX * p;
+  let az = m.startAnchorZ + m.deltaZ * p;
+  if (Number.isFinite(m.pivotLat) && Number.isFinite(m.pivotDep)) {
+    const axes = facingVectors(face);
+    ax = m.pivotX - axes.right.x * m.pivotLat - axes.fwd.x * m.pivotDep;
+    az = m.pivotZ - axes.right.z * m.pivotLat - axes.fwd.z * m.pivotDep;
+  }
+  s.doctrine.anchorX = ax;
+  s.doctrine.anchorZ = az;
+  s.doctrine.formFacing = face;
+  s.orderedFacing12 = face;
+  s.mentalLattice = null;
+  const L = getMentalLattice(s);
+  if (s.claimSi12 >= L.nSlots) s.claimSi12 = -1;
+  if (s.claimSi12 >= 0) {
+    s.beliefSi = s.claimSi12;
+    s.targetX = L.wx[s.claimSi12]; s.targetZ = L.wz[s.claimSi12];
+    s.nextClaimX12 = s.targetX; s.nextClaimZ12 = s.targetZ;
+    s.nextClaimActive12 = true;
+    s.slotDist = Math.hypot(s.x - s.targetX, s.z - s.targetZ);
+  }
+  m.pathDone = p >= 1;
+  if (m.pathDone && s.slotDist < L.sp * V12.dressTol * 1.4 && s.speed < 0.14) {
+    s.maneuverArrive12 += mdt;
+    if (s.maneuverArrive12 >= 0.22) {
+      const resume = m.resumeState;
+      s.maneuver12 = null;
+      s.needMove = false; s.holding = true; s.braced = true;
+      if (resume === PHASE.TESTUDO) {
+        s.drill = PHASE.TESTUDO;
+        s.nextPublicState = PHASE.TESTUDO;
+        s.testudoSettled12 = true;
+      } else setPhase12(s, resume);
+      return false;
+    }
+  } else s.maneuverArrive12 = 0;
+  return true;
+}
+
+function issueManeuverOrder12(kind, value) {
+  const sample = soldiers.find(s => s.claimSi12 >= 0 && s.drill !== PHASE.MUSTER && s.drill !== PHASE.FLEE);
+  if (!sample) return false;
+  v12CompletionTime = null; v12StrictHold = 0;
+  const L = getMentalLattice(sample);
+  const compactOrder = sample.drill === PHASE.TESTUDO;
+  let order;
+  if (kind === 'advance' || kind === 'retire') {
+    const distance = kind === 'advance' ? Math.abs(value || 8) : -Math.abs(value || 6);
+    order = {
+      kind, distance, backwards: distance < 0,
+      duration: Math.abs(distance) / (compactOrder ? (distance < 0 ? 0.38 : 0.52) : (distance < 0 ? 0.95 : 1.45))
+    };
+  } else {
+    const deltaAngle = value || 0;
+    const wheel = kind === 'wheel';
+    const pivotLat = wheel ? (deltaAngle < 0 ? -L.maxLat : L.maxLat) : 0;
+    const pivotDep = wheel ? ((L.rows - 1) * L.sp * 0.5) : 0;
+    const travelRadius = wheel ? Math.max(L.sp, L.maxLat * 2) :
+      Math.max(L.sp, Math.hypot(L.maxLat, (L.rows - 1) * L.sp * 0.5));
+    order = {
+      kind, deltaAngle, pivotLat, pivotDep,
+      duration: Math.max(2.5, Math.abs(deltaAngle) * travelRadius / (compactOrder ? 0.52 : 1.45))
+    };
+  }
+  let heard = 0;
+  for (const s of soldiers) if (hearManeuverOrder12(s, order)) heard++;
+
+  // Command-board state for subsequent orders and HUD only.  Agents already
+  // hold private copies of the audible order above.
+  const startFace = cfg.formFacing;
+  if (order.distance) {
+    const f = facingVectors(startFace).fwd;
+    cfg.orderAnchorX += f.x * order.distance;
+    cfg.orderAnchorZ += f.z * order.distance;
+  } else {
+    if (Number.isFinite(order.pivotLat) && Number.isFinite(order.pivotDep)) {
+      const startL = buildMentalLattice({
+        strength: cfg.count, shape: sample.doctrine.shape, spacing: sample.doctrine.spacing,
+        formFacing: startFace, anchorX: cfg.orderAnchorX, anchorZ: cfg.orderAnchorZ
+      });
+      const pivot = formationWorld(order.pivotLat, order.pivotDep, startL);
+      const endFace = wrapAngle(startFace + order.deltaAngle);
+      const axes = facingVectors(endFace);
+      cfg.orderAnchorX = pivot.x - axes.right.x * order.pivotLat - axes.fwd.x * order.pivotDep;
+      cfg.orderAnchorZ = pivot.z - axes.right.z * order.pivotLat - axes.fwd.z * order.pivotDep;
+    }
+    cfg.formFacing = wrapAngle(cfg.formFacing + order.deltaAngle);
+    cfg.unitFacing = cfg.formFacing;
+  }
+  return heard > 0;
+}
+
+function enterTestudo12(s) {
+  if (s.drill === PHASE.MUSTER || s.drill === PHASE.FLEE) return false;
+  s.preTestudoDoctrine12 = { ...s.doctrine };
+  s.doctrine = {
+    ...s.doctrine,
+    shape: 'testudo',
+    spacing: Math.max(0.92, cfg.bodyR * 2 + 0.08)
+  };
+  s.mentalLattice = null;
+  const L = getMentalLattice(s);
+  resetClaimMemory12(s, L);
+  takeClaim12(s, L, s.homeRow12 * L.cols + s.homeFile12);
+  s.testudoDelay12 = s.homeRow12 * 0.10 + ((s.homeRow12 + s.homeFile12) & 1) * 0.38;
+  s.testudoSettled12 = false;
+  s.maneuver12 = null;
+  s.drill = PHASE.TESTUDO;
+  s.nextPublicState = PHASE.TESTUDO;
+  s.phaseTime12 = 0;
+  s.braced = false; s.holding = false; s.needMove = true;
+  return true;
+}
+
+function leaveTestudo12(s) {
+  if (s.drill !== PHASE.TESTUDO || !s.preTestudoDoctrine12) return false;
+  const current = s.doctrine;
+  s.doctrine = {
+    ...s.preTestudoDoctrine12,
+    anchorX: current.anchorX,
+    anchorZ: current.anchorZ,
+    formFacing: current.formFacing
+  };
+  s.preTestudoDoctrine12 = null;
+  s.mentalLattice = null;
+  const L = getMentalLattice(s);
+  resetClaimMemory12(s, L);
+  takeClaim12(s, L, s.homeRow12 * L.cols + s.homeFile12);
+  s.testudoSettled12 = false;
+  setPhase12(s, PHASE.FORM);
+  return true;
+}
+
+function toggleTestudo12() {
+  const leaving = soldiers.some(s => s.drill === PHASE.TESTUDO);
+  let changed = 0;
+  v12CompletionTime = null; v12StrictHold = 0;
+  for (const s of soldiers) if ((leaving ? leaveTestudo12(s) : enterTestudo12(s))) changed++;
+  const b = document.getElementById('btnTestudo');
+  if (b) { b.classList.toggle('active', !leaving && changed > 0); b.textContent = !leaving && changed > 0 ? 'LEAVE TESTUDO' : 'TESTUDO'; }
+  return changed;
+}
+
+function localSeatOccupancy12(s, L, vis) {
+  if (!s.seatEverSeen12 || s.seatEverSeen12.length !== L.nSlots) {
+    s.seatEverSeen12 = new Uint8Array(L.nSlots);
+  }
+  const occupied = new Uint8Array(L.nSlots);
+  for (const o of vis) {
+    const local = Math.hypot(o.x - s.x, o.z - s.z) <= V12.socialR;
+    if (local) {
+      const body = nearestSeat(o.x, o.z, L, L.sp * 0.48);
+      if (body >= 0) {
+        occupied[body] = 1;
+        if (o.plantedAtPost) s.seatEverSeen12[body] = 1;
+      }
+    }
+    // A deliberate claim gesture is visible over the wider claim channel.
+    // This prevents a locally dressed man from stealing a post whose owner is
+    // still approaching from outside the close body-language radius.
+    const claim = observedClaimSeat12(o, L);
+    if (claim >= 0) {
+      occupied[claim] = 1;
+      if (local && o.plantedAtPost) s.seatEverSeen12[claim] = 1;
+    }
+  }
+  if (s.claimSi12 >= 0) {
+    occupied[s.claimSi12] = 1;
+    s.seatEverSeen12[s.claimSi12] = 1;
+  }
+  return occupied;
+}
+
+function observedFileDepth12(c, L, occupied) {
+  if (c < 0 || c >= L.cols) return -1;
+  for (let r = L.rows - 1; r >= 0; r--) {
+    if (occupied[r * L.cols + c]) return r;
+  }
+  return -1;
+}
+
+function compressionCandidate12(s, L, vis, mdt) {
+  if (s.claimSi12 < 0 || s.microMove12 || s.relief12 ||
+      (!s.everDressed12 && s.drill !== PHASE.FIGHT && s.drill !== PHASE.TESTUDO)) {
+    s.microGapSi12 = -1; s.microGapT12 = 0; s.microGapKind12 = 'none'; return -1;
+  }
+  const mine = L.slots[s.claimSi12];
+  if (!mine) return -1;
+  const occupied = localSeatOccupancy12(s, L, vis);
+  s.compressionWaveT12 = Math.max(0, s.compressionWaveT12 - mdt);
+  for (const event of casualtyEvents12) {
+    if (v12SimTime - event.t <= 5.0 && Math.hypot(s.x - event.x, s.z - event.z) <= V12.socialR) {
+      s.compressionWaveT12 = Math.max(s.compressionWaveT12, 5.0);
+    }
+  }
+  if (vis.some(o => o.publicReliefActive12 || o.publicCompressionActive12)) {
+    s.compressionWaveT12 = Math.max(s.compressionWaveT12, 3.0);
+  }
+  const waveActive = s.compressionWaveT12 > 0;
+  const localBusy = vis.some(o => {
+    if (Math.hypot(o.x - s.x, o.z - s.z) > V12.socialR) return false;
+    return o.publicState === PHASE.MUSTER || o.publicState === PHASE.FORM;
+  });
+  let candidate = -1, kind = 'none', dwell = 0.65;
+
+  // Files close toward the fighting front first.  Only the immediately rear
+  // man can take the hole.  This runs continuously; a never-occupied doctrinal
+  // spare is trusted only after the local formation has gone quiet.
+  if (mine.r > 0) {
+    const front = (mine.r - 1) * L.cols + mine.c;
+    const knownVacancy = !!s.seatEverSeen12[front];
+    const quietVacancy = !localBusy && (s.drill !== PHASE.DRESS || s.phaseTime12 > 2.5);
+    if (!occupied[front] && (waveActive || knownVacancy || quietVacancy)) {
+      candidate = front;
+      kind = 'forward';
+      dwell = (waveActive || knownVacancy) ? 0.16 : 0.75;
+    }
+  }
+
+  // Rear-boundary diffusion: only the last man in a file can move sideways,
+  // and only into the next unfilled post of an adjacent file.  A difference
+  // of two is an immediate imbalance.  A one-rank vacancy may also be passed
+  // locally toward a visibly deeper donor file; this closes a shallow basin
+  // such as 3,2,1,2,3 without disturbing an ordinary 3/2 back rank.
+  const ownDepth = observedFileDepth12(mine.c, L, occupied);
+  const isBackmost = ownDepth === mine.r;
+  if (candidate < 0 && isBackmost && !s.fatigueEnabled12) {
+    const centre = (L.cols - 1) * 0.5;
+    const options = [];
+    for (const dc of [-1, 1]) {
+      const c = mine.c + dc;
+      if (c < 0 || c >= L.cols) continue;
+      const depth = observedFileDepth12(c, L, occupied);
+      if (depth + 1 >= L.rows) continue;
+      const deficit = mine.r - depth;
+      let supported = deficit >= 2;
+
+      // Do not grow into an empty outside file.  An empty file is a hole only
+      // when another occupied file is locally visible beyond it.
+      if (depth < 0) {
+        let bridged = false;
+        for (let look = 1; look <= 3; look++) {
+          const beyond = c + dc * look;
+          if (beyond < 0 || beyond >= L.cols) break;
+          if (observedFileDepth12(beyond, L, occupied) >= 0) { bridged = true; break; }
+        }
+        if (!bridged) continue;
+      }
+
+      // Pass a one-rank vacancy through this file only when a deeper rear man
+      // is visible on the other side and can replace me on the next beat.
+      if (!supported && deficit === 1) {
+        for (let look = 1; look <= 3; look++) {
+          const donor = mine.c - dc * look;
+          if (donor < 0 || donor >= L.cols) break;
+          if (observedFileDepth12(donor, L, occupied) > mine.r) { supported = true; break; }
+        }
+      }
+      if (!supported) continue;
+      const si = (depth + 1) * L.cols + c;
+      if (!occupied[si]) options.push({ si, depth, inward: Math.abs(c - centre) < Math.abs(mine.c - centre) });
+    }
+    if (options.length) {
+      options.sort((a, b) => a.depth - b.depth || Number(b.inward) - Number(a.inward) || a.si - b.si);
+      candidate = options[0].si;
+      kind = 'balance';
+      dwell = 0.55;
+    }
+  }
+
+  // A genuinely decimated local sector may peel an empty outer file inward.
+  // Two nearby observed falls are required, so one casualty never launches a
+  // century-wide lateral cascade.
+  if (candidate < 0 && isBackmost) {
+    let localFalls = 0;
+    for (const event of casualtyEvents12) {
+      if (v12SimTime - event.t <= 30 && Math.hypot(s.x - event.x, s.z - event.z) <= V12.socialR * 1.35) localFalls++;
+    }
+    if (localFalls >= 2) {
+      const outward = mine.c < (L.cols - 1) * 0.5 ? -1 : 1;
+      const outwardDepth = observedFileDepth12(mine.c + outward, L, occupied);
+      if (mine.c + outward < 0 || mine.c + outward >= L.cols || outwardDepth < 0) {
+        for (let step = 1; step <= 3; step++) {
+          const c = mine.c - outward * step;
+          if (c < 0 || c >= L.cols) break;
+          const depth = observedFileDepth12(c, L, occupied);
+          if (depth + 1 >= L.rows) continue;
+          const si = (depth + 1) * L.cols + c;
+          if (!occupied[si]) { candidate = si; kind = 'edge'; dwell = 0.65; break; }
+        }
+      }
+    }
+  }
+
+  if (candidate !== s.microGapSi12 || kind !== s.microGapKind12) {
+    s.microGapSi12 = candidate;
+    s.microGapKind12 = kind;
+    s.microGapT12 = 0;
+    return -1;
+  }
+  if (candidate < 0) { s.microGapT12 = 0; s.microGapKind12 = 'none'; return -1; }
+  s.microGapT12 += mdt;
+  return s.microGapT12 >= dwell ? candidate : -1;
+}
+
+function startMicroMove12(s, L, si) {
+  if (si < 0 || si >= L.nSlots || si === s.claimSi12) return false;
+  s.microFromSi12 = s.claimSi12;
+  s.microMoveKind12 = s.microGapKind12;
+  takeClaim12(s, L, si);
+  s.microMove12 = true;
+  s.compressionWaveT12 = Math.max(s.compressionWaveT12, 3.0);
+  s.nextCompressionActive12 = true;
+  s.microMoveStarted12 = v12SimTime;
+  s.microGapSi12 = -1; s.microGapT12 = 0; s.microGapKind12 = 'none';
+  s.compressionMoves12++;
+  s.braced = false; s.holding = false; s.needMove = true;
+  return true;
+}
+
+function advanceMicroMove12(s, L, vis, mdt) {
+  if (!s.microMove12 || s.claimSi12 < 0) return false;
+  if (claimConflict12(s, L, vis)) {
+    const rejected = s.claimSi12;
+    s.tabuUntil12[rejected] = Infinity;
+    const occupied = localSeatOccupancy12(s, L, vis);
+    const fallback = s.microFromSi12;
+    s.microMove12 = false;
+    s.microMoveKind12 = 'none';
+    s.nextCompressionActive12 = false;
+    s.microFromSi12 = -1;
+    if (fallback >= 0 && !occupied[fallback]) {
+      takeClaim12(s, L, fallback);
+      s.microMove12 = true;
+      s.nextCompressionActive12 = true;
+      s.microFromSi12 = -1;
+    } else {
+      s.claimSi12 = -1; s.beliefSi = -1;
+      s.nextClaimActive12 = false;
+      setPhase12(s, PHASE.FORM);
+    }
+    return s.microMove12;
+  }
+  s.targetX = L.wx[s.claimSi12]; s.targetZ = L.wz[s.claimSi12];
+  s.slotDist = Math.hypot(s.x - s.targetX, s.z - s.targetZ);
+  s.nextClaimX12 = s.targetX; s.nextClaimZ12 = s.targetZ;
+  s.nextClaimActive12 = true;
+  if (s.slotDist < L.sp * V12.dressTol * 1.4 && s.speed < 0.14) s.arriveT12 += mdt;
+  else s.arriveT12 = 0;
+  if (s.arriveT12 >= 0.16) {
+    s.microMove12 = false;
+    s.microMoveKind12 = 'none';
+    s.nextCompressionActive12 = false;
+    s.microFromSi12 = -1;
+    s.arriveT12 = 0;
+    s.braced = true; s.holding = true; s.needMove = false;
+    return false;
+  }
+  s.braced = false; s.holding = false; s.needMove = true;
+  return true;
+}
+
+function startReliefCycle12(s, L) {
+  if (s.claimSi12 < 0) return false;
+  const mine = L.slots[s.claimSi12];
+  if (!mine || mine.r !== 0) return false;
+  const frontX = L.wx[s.claimSi12], frontZ = L.wz[s.claimSi12];
+  // Internal +lat is formation-left in this y-up coordinate convention;
+  // a relief man therefore clears to his own right by decreasing latitude.
+  const laneLat = mine.lat - L.sp * 0.52;
+  const laneFront = formationWorld(laneLat, mine.dep, L);
+  s.relief12 = {
+    file: mine.c,
+    started: v12SimTime,
+    stage: 'egress',
+    laneLat,
+    frontX,
+    frontZ,
+    rejected: Object.create(null),
+    settleStarted: 0
+  };
+  s.claimSi12 = -1; s.beliefSi = -1;
+  s.nextClaimActive12 = false;
+  s.nextReliefActive12 = true;
+  s.nextReliefX12 = frontX; s.nextReliefZ12 = frontZ;
+  s.targetX = laneFront.x; s.targetZ = laneFront.z;
+  s.braced = false; s.holding = false; s.needMove = true;
+  return true;
+}
+
+function advanceReliefCycle12(s, L, vis, mdt) {
+  const relief = s.relief12;
+  if (!relief) return false;
+  s.nextReliefActive12 = true;
+  s.nextReliefX12 = relief.frontX; s.nextReliefZ12 = relief.frontZ;
+  const rearDep = -((L.rows - 1) * L.sp * 0.5 + L.sp * 0.72);
+  if (relief.stage === 'egress') {
+    const p = formationWorld(relief.laneLat, L.slots[relief.file].dep, L);
+    s.targetX = p.x; s.targetZ = p.z;
+    if (Math.hypot(s.x - p.x, s.z - p.z) < 0.28) relief.stage = 'rear';
+  } else if (relief.stage === 'rear') {
+    const p = formationWorld(relief.laneLat, rearDep, L);
+    s.targetX = p.x; s.targetZ = p.z;
+    if (Math.hypot(s.x - p.x, s.z - p.z) < 0.34) relief.stage = 'insert';
+  } else if (relief.stage === 'insert') {
+    let backSi = (L.rows - 1) * L.cols + relief.file;
+    const occupied = localSeatOccupancy12(s, L, vis);
+    if (relief.rejected[backSi]) occupied[backSi] = 1;
+    const fallbackSearch = occupied[backSi] && (!s.fatigueEnabled12 || v12SimTime - relief.started > 8.0);
+    if (fallbackSearch) {
+      let best = -1, bestD = Infinity;
+      for (let c = 0; c < L.cols; c++) {
+        const si = (L.rows - 1) * L.cols + c;
+        if (occupied[si] || relief.rejected[si]) continue;
+        const d = Math.hypot(s.x - L.wx[si], s.z - L.wz[si]);
+        if (d <= V12.socialR && d < bestD) { bestD = d; best = si; }
+      }
+      if (best >= 0) backSi = best;
+    }
+    if (!occupied[backSi]) {
+      takeClaim12(s, L, backSi);
+      relief.stage = 'settle';
+      relief.settleStarted = v12SimTime;
+    } else {
+      if (fallbackSearch) {
+        if (!relief.searchDir) relief.searchDir = relief.file < L.cols * 0.5 ? -1 : 1;
+        const here = formationCoords(s.x, s.z, L);
+        if (here.lat > L.maxLat + L.sp * 0.45) relief.searchDir = -1;
+        if (here.lat < -L.maxLat - L.sp * 0.45) relief.searchDir = 1;
+      }
+      const searchLat = fallbackSearch
+        ? relief.searchDir * (L.maxLat + L.sp * 0.65)
+        : relief.laneLat;
+      const p = formationWorld(searchLat, rearDep, L);
+      s.targetX = p.x; s.targetZ = p.z;
+    }
+  } else if (relief.stage === 'settle') {
+    s.targetX = L.wx[s.claimSi12]; s.targetZ = L.wz[s.claimSi12];
+    const d = Math.hypot(s.x - s.targetX, s.z - s.targetZ);
+    if (v12SimTime - relief.settleStarted > 2.5 && d > 0.18) {
+      relief.rejected[s.claimSi12] = true;
+      s.claimSi12 = -1; s.beliefSi = -1; s.nextClaimActive12 = false;
+      relief.stage = 'insert';
+      relief.searchDir = 0;
+      s.arriveT12 = 0;
+      return true;
+    }
+    if (d < L.sp * V12.dressTol * 1.5 && s.speed < 0.14) s.arriveT12 += mdt;
+    else s.arriveT12 = 0;
+    if (s.arriveT12 >= 0.18) {
+      const duration = v12SimTime - relief.started;
+      reliefCyclesCompleted12++;
+      reliefCycleSeconds12 += duration;
+      reliefCycleMax12 = Math.max(reliefCycleMax12, duration);
+      s.reliefCount12++;
+      s.relief12 = null;
+      s.nextReliefActive12 = false;
+      s.fatigue12 = 11 + hash01(s.id, s.reliefCount12, 0xfa7) * 6;
+      s.arriveT12 = 0;
+      s.braced = true; s.holding = true; s.needMove = false;
+      if (!s.fatigueEnabled12) setPhase12(s, PHASE.DRESS);
+      return false;
+    }
+  }
+  s.slotDist = Math.hypot(s.x - s.targetX, s.z - s.targetZ);
+  s.braced = false; s.holding = false; s.needMove = true;
+  return true;
+}
+
+function issueFatigueFight12(enabled) {
+  cfg.fatigueFight = !!enabled;
+  v12CompletionTime = null; v12StrictHold = 0;
+  for (const s of soldiers) {
+    s.fatigueEnabled12 = !!enabled;
+    if (enabled && (s.drill === PHASE.DRESS || s.drill === PHASE.FIGHT)) {
+      s.fatigue12 = Math.min(s.fatigue12 || 99, 6 + hash01(s.id, 0xfa7, 14) * 8);
+      setPhase12(s, PHASE.FIGHT);
+      s.nextClaimActive12 = s.claimSi12 >= 0;
+      s.braced = true; s.holding = true;
+    } else if (!enabled && s.drill === PHASE.FIGHT && !s.relief12) {
+      setPhase12(s, PHASE.DRESS);
+    }
+  }
+}
+
+function removeFrontCasualty12(id = null) {
+  let index = -1;
+  if (id != null) index = soldiers.findIndex(s => s.id === id);
+  if (index < 0) {
+    let best = Infinity;
+    for (let i = 0; i < soldiers.length; i++) {
+      const s = soldiers[i];
+      if (s.claimSi12 < 0 || s.relief12) continue;
+      const L = getMentalLattice(s);
+      const slot = L.slots[s.claimSi12];
+      if (!slot || slot.r !== 0) continue;
+      const score = Math.abs(slot.lat) + hash01(s.id, Math.floor(v12SimTime), 0xca5) * L.sp * 0.25;
+      if (score < best) { best = score; index = i; }
+    }
+  }
+  if (index < 0) return null;
+  const removed = soldiers[index];
+  casualtyEvents12.push({ x: removed.x, z: removed.z, t: v12SimTime });
+  soldiers.splice(index, 1);
+  v12CompletionTime = null; v12StrictHold = 0;
+  return removed.id;
+}
+
+function inflictCasualties12(fraction = 0.25) {
+  const f = clamp(Number(fraction) || 0, 0, 0.9);
+  const count = Math.max(0, Math.min(soldiers.length - 1, Math.round(soldiers.length * f)));
+  if (!count) return [];
+  const epoch = Math.floor(v12SimTime * 3) + soldiers.length;
+  const chosen = soldiers
+    .map((s, i) => ({ s, i, key: hash01(s.id, epoch, 0xa77) }))
+    .sort((a, b) => a.key - b.key || a.s.id - b.s.id)
+    .slice(0, count)
+    .sort((a, b) => b.i - a.i);
+  const ids = [];
+  for (const item of chosen) {
+    casualtyEvents12.push({ x: item.s.x, z: item.s.z, t: v12SimTime });
+    ids.push(item.s.id);
+    soldiers.splice(item.i, 1);
+  }
+  v12CompletionTime = null; v12StrictHold = 0;
+  return ids;
+}
+
+function updateMinds12(dt) {
+  if (!soldiers.length) return;
+  rebuildSpatial(Math.max(3.5, V12.socialR * 0.75));
+  for (const s of soldiers) {
+    initV12(s, false);
+    s.nextPublicState = s.publicState;
+    s.nextClaimX12 = s.publicClaimX12;
+    s.nextClaimZ12 = s.publicClaimZ12;
+    s.nextClaimActive12 = s.publicClaimActive12;
+    s.nextClaimAge12 = s.publicClaimAge12;
+    s.nextGapX12 = s.publicGapX12;
+    s.nextGapZ12 = s.publicGapZ12;
+    s.nextGapHops12 = s.publicGapHops12;
+    s.nextGapLife12 = Math.max(0, (s.publicGapLife12 || 0) - dt);
+    s.nextGapActive12 = s.publicGapActive12 && s.nextGapLife12 > 0;
+    s.nextReliefActive12 = s.publicReliefActive12;
+    s.nextReliefX12 = s.publicReliefX12;
+    s.nextReliefZ12 = s.publicReliefZ12;
+    s.nextCompressionActive12 = !!s.microMove12;
+  }
+
+  for (const s of soldiers) {
+    s.mindElapsed12 += dt;
+    s.thinkT12 -= dt;
+    if (s.thinkT12 > 0) continue;
+    const mdt = s.mindElapsed12;
+    s.mindElapsed12 = 0;
+    s.thinkT12 += V12.thinkEvery * (0.9 + hash01(s.id, 4, 9) * 0.2);
+    s.phaseTime12 += mdt;
+    s.orderAge12 += mdt;
+    if (s.claimSi12 >= 0) s.claimAge12 += mdt;
+    else s.claimAge12 = 0;
+    s.nextClaimAge12 = s.claimAge12;
+    s.drillTime = s.phaseTime12;
+    s.nextPublicState = s.drill;
+    const L = getMentalLattice(s);
+    const vis = visible12(s, Math.max(V12.claimR, V12.socialR));
+    const decisionVis = vis;
+
+    s.neighborStates.fill(0);
+    for (const o of vis) {
+      if (Math.hypot(o.x - s.x, o.z - s.z) > V12.socialR) continue;
+      const idx = PHASE_INDEX[o.publicState];
+      if (idx != null) s.neighborStates[idx]++;
+    }
+    let dominant = 0;
+    for (let i = 1; i < s.neighborStates.length; i++) {
+      if (s.neighborStates[i] > s.neighborStates[dominant]) dominant = i;
+    }
+    s.dominantNeighborState = PHASE_NAMES[dominant];
+
+    if (s.drill === PHASE.FIGHT) {
+      if (s.relief12) {
+        advanceReliefCycle12(s, L, vis, mdt);
+        continue;
+      }
+      if (s.microMove12) {
+        advanceMicroMove12(s, L, vis, mdt);
+        continue;
+      }
+      if (s.fatigueEnabled12 && s.claimSi12 >= 0) {
+        const mine = L.slots[s.claimSi12];
+        if (mine && mine.r === 0) {
+          s.fatigue12 -= mdt;
+          const adjacentRelief = vis.some(o => o.publicReliefActive12 &&
+            Math.hypot(o.publicReliefX12 - s.x, o.publicReliefZ12 - s.z) < L.sp * 2.2);
+          if (s.fatigue12 <= 0 && !adjacentRelief && startReliefCycle12(s, L)) continue;
+        } else s.fatigue12 = Math.min(18, s.fatigue12 + mdt * 0.55);
+      }
+      const gap = compressionCandidate12(s, L, vis, mdt);
+      if (gap >= 0 && startMicroMove12(s, L, gap)) continue;
+      s.nextClaimActive12 = s.claimSi12 >= 0;
+      if (s.claimSi12 >= 0) {
+        s.targetX = L.wx[s.claimSi12]; s.targetZ = L.wz[s.claimSi12];
+        s.nextClaimX12 = s.targetX; s.nextClaimZ12 = s.targetZ;
+      }
+      s.needMove = false; s.holding = true; s.braced = true;
+      s.nextReliefActive12 = false;
+      continue;
+    }
+    if (s.drill === PHASE.MARCH) {
+      if (s.maneuver12) {
+        const active = advanceManeuver12(s, mdt);
+        if (active && s.drill === PHASE.MARCH) {
+          const movingL = getMentalLattice(s);
+          const gap = compressionCandidate12(s, movingL, vis, mdt);
+          if (gap >= 0) startMicroMove12(s, movingL, gap);
+        }
+        continue;
+      }
+      if (s.microMove12) {
+        advanceMicroMove12(s, L, vis, mdt);
+        continue;
+      }
+      setPhase12(s, s.fatigueEnabled12 ? PHASE.FIGHT : PHASE.DRESS);
+      continue;
+    }
+    if (s.drill === PHASE.TESTUDO) {
+      if (s.maneuver12) {
+        advanceManeuver12(s, mdt);
+        continue;
+      }
+      if (s.microMove12) {
+        advanceMicroMove12(s, L, vis, mdt);
+        continue;
+      }
+      if (s.testudoSettled12) {
+        s.targetX = L.wx[s.claimSi12]; s.targetZ = L.wz[s.claimSi12];
+        s.slotDist = Math.hypot(s.x - s.targetX, s.z - s.targetZ);
+        if (s.slotDist > L.sp * V12.dressTol * 1.7) {
+          s.microMove12 = true;
+          s.braced = false; s.holding = false;
+          continue;
+        }
+        const gap = compressionCandidate12(s, L, vis, mdt);
+        if (gap >= 0 && startMicroMove12(s, L, gap)) continue;
+        s.nextClaimActive12 = s.claimSi12 >= 0;
+        s.needMove = false; s.holding = true; s.braced = true;
+        continue;
+      }
+      if (s.claimSi12 >= 0 && s.phaseTime12 > s.testudoDelay12 + 0.5) {
+        const d = Math.hypot(s.x - L.wx[s.claimSi12], s.z - L.wz[s.claimSi12]);
+        if (s.testudoLastDist12 - d > 0.025) s.testudoStuckT12 = Math.max(0, s.testudoStuckT12 - mdt * 2);
+        else s.testudoStuckT12 += mdt;
+        s.testudoLastDist12 = d;
+        if (s.testudoStuckT12 > 1.15 && !s.testudoRouteStage12) {
+          s.testudoRouteStage12 = 1;
+        }
+      }
+      // An unsettled testudo man uses the ordinary local claim/conflict logic
+      // below, but with testudo-specific speed, delay, and terminal state.
+    }
+    if (s.drill === PHASE.FLEE) {
+      const rm = Math.hypot(s.x, s.z) || 1;
+      s.targetX = s.x + (s.x / rm) * 24;
+      s.targetZ = s.z + (s.z / rm) * 24;
+      s.needMove = true; s.holding = false; s.braced = false;
+      s.nextClaimActive12 = false;
+      continue;
+    }
+    if (s.drill === PHASE.MUSTER) {
+      const p = formationWorld(s.prefLat12, s.prefDep12, L);
+      s.targetX = p.x;
+      s.targetZ = p.z;
+      s.slotDist = Math.hypot(s.x - s.targetX, s.z - s.targetZ);
+      s.needMove = true; s.holding = false;
+      if (s.phaseTime12 >= V12.musterTime) {
+        setPhase12(s, PHASE.FORM);
+        // First post is derived solely from my own approach sector.
+        takeClaim12(s, L, s.homeRow12 * L.cols + s.homeFile12);
+      }
+      continue;
+    }
+    if (s.drill === PHASE.DRESS) {
+      s.everDressed12 = true;
+      if (s.microMove12) {
+        advanceMicroMove12(s, L, vis, mdt);
+        continue;
+      }
+      if (s.claimSi12 >= 0) {
+        s.targetX = L.wx[s.claimSi12]; s.targetZ = L.wz[s.claimSi12];
+        s.slotDist = Math.hypot(s.x - s.targetX, s.z - s.targetZ);
+      }
+      // A braced man resists contact, but if contact really displaces him he
+      // actively recovers his post.  This makes the public FORM cue, ORCA
+      // mobility, and physical motion agree instead of allowing hidden creep.
+      if (!s.redressing12 && s.slotDist > L.sp * V12.dressTol * 1.5) {
+        s.redressing12 = true;
+        s.arriveT12 = 0;
+        s.braced = false;
+        s.holding = false;
+      }
+      s.nextClaimX12 = s.targetX; s.nextClaimZ12 = s.targetZ;
+      s.nextClaimActive12 = true;
+      if (s.redressing12) {
+        if (s.slotDist < L.sp * V12.dressTol && s.speed < 0.12) s.arriveT12 += mdt;
+        else s.arriveT12 = 0;
+        if (s.arriveT12 >= V12.dressHold) {
+          s.redressing12 = false; s.braced = true; s.holding = true;
+        }
+      } else if (s.orderAge12 > 5) {
+        // Once a man has dressed, lateral reflow is exclusively rear-boundary
+        // diffusion.  The old same-rank vacancy shuffle made a single rear
+        // hole walk across an entire century after one front casualty.
+        const gap = compressionCandidate12(s, L, vis, mdt);
+        if (gap >= 0 && startMicroMove12(s, L, gap)) continue;
+      }
+      const gap = findGapCue12(s, L, vis);
+      if (gap >= 0) {
+        s.nextGapX12 = L.wx[gap]; s.nextGapZ12 = L.wz[gap];
+        s.nextGapHops12 = 0; s.nextGapLife12 = 0.42;
+        s.nextGapActive12 = true;
+      }
+      s.slotLocked = true;
+      s.holding = !s.redressing12;
+      s.braced = !s.redressing12;
+      s.needMove = s.redressing12;
+      s.nextPublicState = s.redressing12 ? PHASE.FORM : PHASE.DRESS;
+      continue;
+    }
+
+    if (s.claimSi12 < 0) chooseClaim12(s, L, decisionVis);
+    if (s.claimSi12 < 0) {
+      updateScoutTarget12(s, L, decisionVis);
+      continue;
+    }
+    s.targetX = L.wx[s.claimSi12]; s.targetZ = L.wz[s.claimSi12];
+    s.beliefSi = s.claimSi12;
+    s.slotDist = Math.hypot(s.x - s.targetX, s.z - s.targetZ);
+    s.nextClaimX12 = s.targetX; s.nextClaimZ12 = s.targetZ;
+    s.nextClaimActive12 = true;
+
+    if (claimConflict12(s, L, vis)) s.conflictT12 += mdt;
+    else s.conflictT12 = Math.max(0, s.conflictT12 - mdt * 2);
+    if (s.conflictT12 >= V12.conflictHold) {
+      // A visible, stable winner proves that post has an owner.  Re-entering
+      // the auction later is the musical-chairs failure, so rejection lasts
+      // for the current formation order.
+      s.tabuUntil12[s.claimSi12] = Infinity;
+      s.claimLosses12++;
+      s.claimAge12 = 0; s.nextClaimAge12 = 0;
+      // If a visible alternative exists, redirect in one decision instead of
+      // briefly broadcasting indecision between release and reacquisition.
+      // With no observed/candidate post, explicitly release and go look.
+      if (chooseClaim12(s, L, vis) < 0) {
+        s.claimSi12 = -1; s.beliefSi = -1; s.nextClaimActive12 = false;
+        updateScoutTarget12(s, L, vis);
+      }
+      continue;
+    }
+
+    const tol = L.sp * V12.dressTol;
+    if (s.slotDist < tol && s.speed < 0.12) s.arriveT12 += mdt;
+    else s.arriveT12 = Math.max(0, s.arriveT12 - mdt * 2);
+    if (s.arriveT12 >= V12.dressHold) {
+      if (s.drill === PHASE.TESTUDO) {
+        s.testudoSettled12 = true;
+        s.testudoRouteStage12 = 0;
+        s.testudoStuckT12 = 0;
+        s.holding = true; s.braced = true; s.needMove = false;
+        s.nextPublicState = PHASE.TESTUDO;
+      } else setPhase12(s, PHASE.DRESS);
+    }
+    if (!s.testudoSettled12) {
+      s.needMove = s.slotDist >= tol * 0.7;
+      s.holding = false; s.braced = false;
+    }
+  }
+
+  for (const s of soldiers) {
+    s.publicState = s.nextPublicState;
+    s.publicClaimX12 = s.nextClaimX12;
+    s.publicClaimZ12 = s.nextClaimZ12;
+    s.publicClaimActive12 = s.nextClaimActive12;
+    s.publicClaimAge12 = s.nextClaimAge12;
+    s.publicGapX12 = s.nextGapX12;
+    s.publicGapZ12 = s.nextGapZ12;
+    s.publicGapActive12 = s.nextGapActive12;
+    s.publicGapHops12 = s.nextGapHops12;
+    s.publicGapLife12 = s.nextGapLife12;
+    s.publicReliefActive12 = s.nextReliefActive12;
+    s.publicReliefX12 = s.nextReliefX12;
+    s.publicReliefZ12 = s.nextReliefZ12;
+    s.publicCompressionActive12 = s.nextCompressionActive12;
+  }
+}
+
+function collisionRadius12(s) {
+  if (s.drill === PHASE.TESTUDO) return s.braced ? 0.36 : 0.22;
+  const overtMobile = !!(s.relief12 || s.microMove12 || s.maneuver12);
+  return (s.braced || (s.drill === PHASE.FIGHT && !overtMobile)) ? 0.38 : 0.24;
+}
+
+function preferredVelocity12(s, dt) {
+  const L = getMentalLattice(s);
+  const orderedMicro = !!(s.relief12 || s.microMove12 || s.maneuver12);
+  if (s.drill === PHASE.FIGHT && !orderedMicro) return { x: 0, z: 0, speed: 0 };
+  let tx = s.targetX, tz = s.targetZ;
+  if (s.drill === PHASE.FORM && s.routeStage12 > 0 && s.claimSi12 >= 0) {
+    const { lat, dep } = formationCoords(s.x, s.z, L);
+    if (s.routeStage12 === 1) {
+      const p = formationWorld(s.routeGateLat12, s.routeApronDep12, L);
+      tx = p.x;
+      tz = p.z;
+      if (Math.abs(dep - s.routeApronDep12) < 0.38) s.routeStage12 = 2;
+    }
+    if (s.routeStage12 === 2) {
+      const targetLat = L.slots[s.claimSi12].lat;
+      const p = formationWorld(targetLat, s.routeApronDep12, L);
+      tx = p.x;
+      tz = p.z;
+      if (Math.abs(lat - targetLat) < 0.38) s.routeStage12 = 3;
+    }
+  }
+  if (s.wpT12 > 0) {
+    s.wpT12 = Math.max(0, s.wpT12 - dt);
+    if (Math.hypot(s.wpX12 - s.x, s.wpZ12 - s.z) > 0.45) {
+      tx = s.wpX12; tz = s.wpZ12;
+    } else s.wpT12 = 0;
+  }
+  const dx = tx - s.x, dz = tz - s.z;
+  let dxGoal = dx, dzGoal = dz;
+  if (s.drill === PHASE.TESTUDO && s.testudoRouteStage12 && s.claimSi12 >= 0) {
+    const slot = L.slots[s.claimSi12];
+    const here = formationCoords(s.x, s.z, L);
+    const side = here.lat < 0 ? -1 : 1;
+    const edgeLat = side * (L.maxLat + L.sp * 0.95);
+    const rearDep = -((L.rows - 1) * L.sp * 0.5 + L.sp * 0.92);
+    let p;
+    if (s.testudoRouteStage12 === 1) {
+      p = formationWorld(edgeLat, here.dep, L);
+      if (Math.abs(here.lat - edgeLat) < 0.24) s.testudoRouteStage12 = 2;
+    } else if (s.testudoRouteStage12 === 2) {
+      p = formationWorld(edgeLat, rearDep, L);
+      if (Math.abs(here.dep - rearDep) < 0.25) s.testudoRouteStage12 = 3;
+    } else if (s.testudoRouteStage12 === 3) {
+      p = formationWorld(slot.lat, rearDep, L);
+      if (Math.abs(here.lat - slot.lat) < 0.24) s.testudoRouteStage12 = 4;
+    } else p = { x: L.wx[s.claimSi12], z: L.wz[s.claimSi12] };
+    tx = p.x; tz = p.z;
+    dxGoal = tx - s.x; dzGoal = tz - s.z;
+  }
+  const d = Math.hypot(dxGoal, dzGoal);
+  if (s.drill === PHASE.TESTUDO) {
+    if ((!s.maneuver12 && s.testudoSettled12 && !s.microMove12) ||
+        (!s.maneuver12 && s.phaseTime12 < s.testudoDelay12)) {
+      return { x: 0, z: 0, speed: 0 };
+    }
+    const speed = s.maneuver12
+      ? Math.min(0.58, d * 2.0)
+      : s.testudoRouteStage12
+      ? Math.min(s.testudoRouteStage12 === 4 ? 0.72 : 1.15, d * 2.5)
+      : Math.min(0.88, d * 2.4);
+    return d > 1e-6 ? { x: dxGoal / d * speed, z: dzGoal / d * speed, speed } : { x: 0, z: 0, speed: 0 };
+  }
+  if (s.drill === PHASE.MARCH || orderedMicro) {
+    let cap = 1.65;
+    if (s.maneuver12 && s.maneuver12.backwards) cap = 1.02;
+    if (s.relief12 && s.relief12.stage === 'rear') cap = 3.25;
+    else if (s.relief12) cap = 1.55;
+    if (s.microMove12) cap = 1.70;
+    const speed = Math.min(cap, d * (s.relief12 && s.relief12.stage === 'rear' ? 3.2 : 2.8));
+    return d > 1e-6 ? { x: dx / d * speed, z: dz / d * speed, speed } : { x: 0, z: 0, speed: 0 };
+  }
+  if (s.drill === PHASE.DRESS) {
+    const speed = s.redressing12 ? Math.min(3.9, d * 8.0) : 0;
+    return d > 1e-6 ? { x: dx / d * speed, z: dz / d * speed, speed } : { x: 0, z: 0, speed: 0 };
+  }
+  if (s.drill === PHASE.FLEE) {
+    const speed = 3.5;
+    return d > 1e-6 ? { x: dx / d * speed, z: dz / d * speed, speed } : { x: 0, z: speed, speed };
+  }
+  const scoutPace12 = 3.90;
+  let speed = s.scouting12
+    ? (d > 0.75 ? scoutPace12 : Math.min(1.8, d * 3.5))
+    : s.routeStage12 > 0
+    ? (d > 0.75 ? 3.25 : Math.min(1.4, d * 3.0))
+    : (d > 10 ? 3.90 : (d > 1.2 ? 2.55 : Math.min(1.90, d * 3.8)));
+  if (s.drill === PHASE.MUSTER && d < 1) speed = Math.min(speed, 0.8);
+  if (d < L.sp * 0.18) speed = Math.min(speed, d * 3);
+  return d > 1e-6 ? { x: dx / d * speed, z: dz / d * speed, speed } : { x: 0, z: 0, speed: 0 };
+}
+
+function setPortalWaypoint12(s, neighbors) {
+  if ((s.drill !== PHASE.FORM && !(s.drill === PHASE.DRESS && s.redressing12)) || s.claimSi12 < 0) return;
+  if (s.wpT12 > 0) return;
+  if (s.portalActive12) {
+    if (Math.hypot(s.portalX12 - s.x, s.portalZ12 - s.z) > 0.42) {
+      s.wpX12 = s.portalX12; s.wpZ12 = s.portalZ12; s.wpT12 = 1.45;
+      return;
+    }
+    s.portalActive12 = false;
+  }
+  const L = getMentalLattice(s);
+  const slot = L.slots[s.claimSi12];
+  const { lat: curLat, dep: curDep } = formationCoords(s.x, s.z, L);
+  const targetLat = slot.lat, targetDep = slot.dep;
+  let blocker = null, blockerDep = 0, bestAlong = Infinity;
+  for (const o of neighbors) {
+    if (o.publicState !== PHASE.DRESS && o.publicState !== PHASE.FIGHT) continue;
+    const { lat: olat, dep: odep } = formationCoords(o.x, o.z, L);
+    if ((curDep - odep) * (targetDep - odep) >= 0) continue;
+    if (Math.abs(olat - targetLat) > L.sp * 0.42) continue;
+    const along = Math.abs(curDep - odep);
+    if (along < bestAlong) { bestAlong = along; blocker = o; blockerDep = odep; }
+  }
+  if (!blocker || bestAlong > L.sp * 1.7) return;
+
+  const c1 = targetLat - L.sp * 0.5;
+  const c2 = targetLat + L.sp * 0.5;
+  let portalLat;
+  const d1 = Math.abs(curLat - c1), d2 = Math.abs(curLat - c2);
+  if (Math.abs(d1 - d2) > 0.08) portalLat = d1 < d2 ? c1 : c2;
+  else portalLat = hash01(s.id, s.claimSi12, 0x907) < 0.5 ? c1 : c2;
+  const direction = Math.sign(targetDep - curDep) || 1;
+  const portalDep = blockerDep + direction * L.sp * 0.62;
+  const p = formationWorld(portalLat, portalDep, L);
+  s.wpX12 = p.x;
+  s.wpZ12 = p.z;
+  s.portalX12 = s.wpX12; s.portalZ12 = s.wpZ12;
+  s.portalActive12 = true;
+  s.wpT12 = 1.45;
+}
+
+function planSoldier12(s, dt) {
+  let neighbors = null;
+  const orderedMobile = !!(s.relief12 || s.microMove12 || s.maneuver12 ||
+    (s.drill === PHASE.TESTUDO && !s.testudoSettled12));
+  const mobile = s.drill !== PHASE.FIGHT
+    ? (s.drill !== PHASE.DRESS || s.redressing12 || orderedMobile)
+    : orderedMobile;
+  if (mobile) {
+    neighbors = visible12(s, V12.neighborR);
+    setPortalWaypoint12(s, neighbors);
+  }
+  const pref = preferredVelocity12(s, dt);
+  s.needMove = pref.speed > 0.04;
+  if (s.drill === PHASE.DRESS) {
+    s.holding = !s.redressing12 && !orderedMobile &&
+      s.slotDist < getMentalLattice(s).sp * V12.dressTol * 1.2;
+  } else if (s.drill === PHASE.FIGHT) s.holding = !orderedMobile;
+  else if (s.drill === PHASE.TESTUDO) s.holding = s.testudoSettled12 && !orderedMobile;
+  if (!mobile) {
+    s.plannedVx12 = pref.x; s.plannedVz12 = pref.z;
+  } else {
+    if (s.drill === PHASE.TESTUDO && s.testudoRouteStage12) {
+      // Escape and re-entry use a shield-block dislocation.  Contact physics
+      // propagates the temporary seam and displaced men recover locally;
+      // treating every settled shield as an ORCA wall would deadlock a full block.
+      neighbors = neighbors.filter(o => o.publicState !== PHASE.TESTUDO);
+    }
+    neighbors = neighbors
+      .sort((a, b) => {
+        const ad = (a.x - s.x) ** 2 + (a.z - s.z) ** 2;
+        const bd = (b.x - s.x) ** 2 + (b.z - s.z) ** 2;
+        return ad - bd || a.id - b.id;
+      }).slice(0, 24);
+    const speedCap = s.drill === PHASE.FLEE ? 3.90 : 3.95;
+    const orcaOptions = {
+      dt,
+      timeHorizon: V12.timeHorizon,
+      staticTimeHorizon: V12.staticHorizon,
+      padding: V12.safePad,
+      collisionRadius: a => a.publicState === PHASE.TESTUDO
+        ? (a.plantedAtPost ? 0.36 : 0.22)
+        : (a.plantedAtPost || a.publicState === PHASE.DRESS || a.publicState === PHASE.FIGHT) ? 0.38 : 0.24
+    };
+    const orcaSelf = orderedMobile &&
+      (s.publicState === PHASE.FIGHT || s.publicState === PHASE.DRESS || s.publicState === PHASE.TESTUDO)
+      ? {
+          id: s.id, x: s.x, z: s.z,
+          seenVx: s.seenVx, seenVz: s.seenVz, seenSpeed: s.seenSpeed,
+          vx: s.vx, vz: s.vz, speed: s.speed,
+          publicState: PHASE.MARCH,
+          braced: false, holding: false, drill: PHASE.MARCH
+        }
+      : s;
+    const solved = ORCA2D.solve(orcaSelf, neighbors, pref, speedCap, orcaOptions);
+    s.plannedVx12 = solved.x;
+    s.plannedVz12 = solved.z;
+  }
+
+  const dvx = s.plannedVx12 - s.vx, dvz = s.plannedVz12 - s.vz;
+  const dm = Math.hypot(dvx, dvz);
+  // Calm steering in the dense first rush; personal time-under-order then
+  // raises commitment smoothly so an isolated straggler does not dawdle.
+  // This uses only the soldier's own clock, never formation completion data.
+  const urgencyAccel = V12.accel + 2.0 * clamp((s.orderAge12 - 18) / 8, 0, 1);
+  const maxDv = urgencyAccel * dt;
+  if (dm > maxDv && dm > 1e-7) {
+    s.vx += dvx / dm * maxDv; s.vz += dvz / dm * maxDv;
+  } else { s.vx = s.plannedVx12; s.vz = s.plannedVz12; }
+  s.speed = Math.hypot(s.vx, s.vz);
+  if (s.speed > 0.08 && mobile) {
+    const travelFacing = s.relief12 && s.relief12.stage === 'rear';
+    const keepFormationFacing = s.drill === PHASE.MARCH || s.drill === PHASE.TESTUDO ||
+      s.maneuver12 || s.microMove12 || (s.relief12 && !travelFacing);
+    const want = keepFormationFacing ? s.orderedFacing12 : Math.atan2(s.vx, s.vz);
+    const turn = clamp(angleDiff(want, s.heading), -5.5 * dt, 5.5 * dt);
+    s.heading = wrapAngle(s.heading + turn);
+  } else {
+    const turn = clamp(angleDiff(s.orderedFacing12, s.heading), -4.5 * dt, 4.5 * dt);
+    s.heading = wrapAngle(s.heading + turn);
+  }
+
+}
+
+function integrateSoldier12(s, dt) {
+  s.x += s.vx * dt; s.z += s.vz * dt;
+  s.gait += dt * (4 + s.speed * 2.5);
+}
+
+function resolveCollisions12() {
+  const maxD = 0.38 * 2 + 0.018;
+  const iters = soldiers.length > 400 ? 4 : 6;
+  for (let iter = 0; iter < iters; iter++) {
+    rebuildSpatial(1.1);
+    for (let i = 0; i < soldiers.length; i++) {
+      const a = soldiers[i];
+      const near = bodiesNear12(a, maxD * 1.08);
+      for (let k = 0; k < near.length; k++) {
+        const b = near[k];
+        if (b.id <= a.id) continue;
+        const minD = collisionRadius12(a) + collisionRadius12(b) + 0.018;
+        const minD2 = minD * minD;
+        let dx = b.x - a.x, dz = b.z - a.z;
+        let d2 = dx * dx + dz * dz;
+        if (d2 >= minD2) continue;
+        let d, ux, uz;
+        if (d2 < 1e-12) {
+          const ang = hash01(a.id, b.id, 91) * Math.PI * 2;
+          d = 0; ux = Math.cos(ang); uz = Math.sin(ang);
+        } else { d = Math.sqrt(d2); ux = dx / d; uz = dz / d; }
+        const pen = minD - d;
+        const aMobile = !!(a.relief12 || a.microMove12 || a.maneuver12);
+        const bMobile = !!(b.relief12 || b.microMove12 || b.maneuver12);
+        const aW = a.drill === PHASE.TESTUDO && a.braced ? 0.28
+          : (a.braced || (a.drill === PHASE.FIGHT && !aMobile)) ? 0.03 : 1;
+        const bW = b.drill === PHASE.TESTUDO && b.braced ? 0.28
+          : (b.braced || (b.drill === PHASE.FIGHT && !bMobile)) ? 0.03 : 1;
+        const sum = aW + bW;
+        a.x -= ux * pen * aW / sum; a.z -= uz * pen * aW / sum;
+        b.x += ux * pen * bW / sum; b.z += uz * pen * bW / sum;
+        const rel = (b.vx - a.vx) * ux + (b.vz - a.vz) * uz;
+        if (rel < 0) {
+          const impulse = -rel / sum;
+          a.vx -= ux * impulse * aW; a.vz -= uz * impulse * aW;
+          b.vx += ux * impulse * bW; b.vz += uz * impulse * bW;
+        }
+      }
+    }
+  }
+  for (const s of soldiers) s.speed = Math.hypot(s.vx, s.vz);
+}
+
+function diagnostics12() {
+  const occupied = new Map();
+  let strict = 0, maxError = 0, rms = 0, finiteErrors = 0;
+  let overlaps = 0, minGap = Infinity, claimSwitches = 0;
+  let mustering = 0, forming = 0, dressed = 0, marching = 0, fighting = 0, fleeing = 0, testudo = 0;
+  let nearPost = 0, holding = 0, scouting = 0, radiusSum = 0, maxRadius = 0;
+  let cycling = 0, compressionMoves = 0, testudoSettled = 0;
+  for (let i = 0; i < soldiers.length; i++) {
+    const s = soldiers[i];
+    const L = getMentalLattice(s);
+    const err = s.claimSi12 >= 0 ? Math.hypot(s.x - L.wx[s.claimSi12], s.z - L.wz[s.claimSi12]) : Infinity;
+    if (Number.isFinite(err)) { maxError = Math.max(maxError, err); rms += err * err; finiteErrors++; }
+    if (s.drill === PHASE.MUSTER) mustering++;
+    else if (s.drill === PHASE.FORM) forming++;
+    else if (s.drill === PHASE.DRESS) dressed++;
+    else if (s.drill === PHASE.MARCH) marching++;
+    else if (s.drill === PHASE.FIGHT) fighting++;
+    else if (s.drill === PHASE.FLEE) fleeing++;
+    else if (s.drill === PHASE.TESTUDO) testudo++;
+    if (s.relief12) cycling++;
+    if (s.testudoSettled12) testudoSettled++;
+    compressionMoves += s.compressionMoves12 || 0;
+    if (err <= L.sp * V12.dressTol * 1.25) nearPost++;
+    if (s.holding) holding++;
+    if (s.scouting12) scouting++;
+    const radius = Math.hypot(s.x - ANCHOR.x, s.z - ANCHOR.z);
+    radiusSum += radius; maxRadius = Math.max(maxRadius, radius);
+    const seat = nearestSeat(s.x, s.z, L, L.sp * V12.dressTol * 1.25);
+    if (seat >= 0) occupied.set(seat, (occupied.get(seat) || 0) + 1);
+    if (s.drill === PHASE.DRESS && s.publicState === PHASE.DRESS &&
+        !s.redressing12 && s.holding && s.braced &&
+        err <= L.sp * V12.dressTol * 1.15 && s.speed < 0.10 &&
+        Math.abs(angleDiff(cfg.unitFacing, s.heading)) <= 3 * Math.PI / 180) strict++;
+    claimSwitches += s.claimLosses12 || 0;
+    for (let j = i + 1; j < soldiers.length; j++) {
+      const o = soldiers[j];
+      const gap = Math.hypot(s.x - o.x, s.z - o.z);
+      minGap = Math.min(minGap, gap);
+      if (gap < collisionRadius12(s) + collisionRadius12(o) - 1e-3) overlaps++;
+    }
+  }
+  let duplicatePosts = 0;
+  for (const count of occupied.values()) if (count > 1) duplicatePosts += count - 1;
+  const allStrict = strict === soldiers.length && duplicatePosts === 0 && overlaps === 0;
+  return {
+    n: soldiers.length,
+    mustering, forming, dressed, marching, fighting, fleeing, testudo, nearPost, holding,
+    dressedFraction: soldiers.length ? dressed / soldiers.length : 0,
+    nearPostFraction: soldiers.length ? nearPost / soldiers.length : 0,
+    meanPostError: finiteErrors ? Math.sqrt(rms / finiteErrors) : 0,
+    maxPostError: maxError,
+    scouting,
+    meanRadius: soldiers.length ? radiusSum / soldiers.length : 0,
+    maxRadius,
+    minGap: Number.isFinite(minGap) ? minGap : 0,
+    overlaps,
+    duplicatePosts,
+    seed: cfg.seed >>> 0,
+    strictDressed: strict,
+    strictFraction: soldiers.length ? strict / soldiers.length : 0,
+    allStrict,
+    maxStrictError: maxError,
+    rmsStrictError: finiteErrors ? Math.sqrt(rms / finiteErrors) : 0,
+    strictDuplicatePosts: duplicatePosts,
+    strictOverlaps: overlaps,
+    claimSwitches,
+    cycling,
+    compressionMoves,
+    reliefCyclesCompleted: reliefCyclesCompleted12,
+    reliefCycleAverage: reliefCyclesCompleted12 ? reliefCycleSeconds12 / reliefCyclesCompleted12 : 0,
+    reliefCycleMax: reliefCycleMax12,
+    testudoSettled,
+    simTime: v12SimTime,
+    completionTime: v12CompletionTime
+  };
+}
+
+function trackCompletion12(dt) {
+  if (v12CompletionTime != null || !soldiers.length) return;
+  const claims = new Set();
+  let ok = true;
+  for (const s of soldiers) {
+    if (s.drill !== PHASE.DRESS || s.publicState !== PHASE.DRESS ||
+        s.redressing12 || !s.holding || !s.braced ||
+        s.claimSi12 < 0 || s.speed > 0.08 ||
+        Math.abs(angleDiff(cfg.unitFacing, s.heading)) > 3 * Math.PI / 180) {
+      ok = false; break;
+    }
+    const L = getMentalLattice(s);
+    if (Math.hypot(s.x - L.wx[s.claimSi12], s.z - L.wz[s.claimSi12]) > 0.10 ||
+        claims.has(s.claimSi12)) { ok = false; break; }
+    claims.add(s.claimSi12);
+  }
+  // This is an observer-side completion audit, never an input to cognition.
+  // Only pay the pairwise cost once every individual condition is satisfied.
+  if (ok) {
+    for (let i = 0; i < soldiers.length && ok; i++) {
+      for (let j = i + 1; j < soldiers.length; j++) {
+        const a = soldiers[i], b = soldiers[j];
+        if (Math.hypot(a.x - b.x, a.z - b.z) <
+            collisionRadius12(a) + collisionRadius12(b) - 0.002) {
+          ok = false; break;
+        }
+      }
+    }
+  }
+  v12StrictHold = ok ? v12StrictHold + dt : 0;
+  if (v12StrictHold >= 0.25) v12CompletionTime = v12SimTime;
+}
+
+// ——— Loop ———
+function step(dt) {
+  v12SimTime += dt;
+  updateMinds12(dt);
+  // Sense/plan/act barrier: all soldiers plan against the same visible world
+  // state, so array order cannot grant later agents fresher information.
+  for (const s of soldiers) {
+    s.seenVx = s.vx;
+    s.seenVz = s.vz;
+    s.seenSpeed = s.speed;
+  }
+  rebuildSpatial(2.5);
+  for (const s of soldiers) planSoldier12(s, dt);
+  for (const s of soldiers) integrateSoldier12(s, dt);
+  resolveCollisions12();
+  trackCompletion12(dt);
+}
+
+let last = performance.now();
+function loop(now) {
+  const t0 = performance.now();
+  const raw = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  if (!cfg.paused) {
+    let budget = raw * cfg.timeScale;
+    time += budget;
+    const maxSub = 1 / 30;
+    // Fewer substeps at large N (stability still ok with hard discs)
+    const maxSteps = soldiers.length > 500 ? 4 : (soldiers.length > 200 ? 6 : 8);
+    let steps = 0;
+    while (budget > 1e-6 && steps < maxSteps) {
+      const dt = Math.min(maxSub, budget);
+      step(dt);
+      budget -= dt;
+      steps++;
+    }
+  }
+  render();
+  _frameMs = performance.now() - t0;
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+// ——— UI ———
+function setShape(shape) {
+  cfg.shape = shape;
+  document.getElementById('btnTriple').classList.toggle('active', shape === 'triple');
+  document.getElementById('btnRect').classList.toggle('active', shape === 'rect');
+  document.getElementById('btnSquare').classList.toggle('active', shape === 'square');
+  resetMinds();
+}
+
+document.getElementById('btnTriple').onclick = () => setShape('triple');
+document.getElementById('btnRect').onclick = () => setShape('rect');
+document.getElementById('btnSquare').onclick = () => setShape('square');
+document.getElementById('btnFaceLeft').onclick = () => issueFaceOrder(Math.PI / 2);
+document.getElementById('btnFaceRight').onclick = () => issueFaceOrder(-Math.PI / 2);
+document.getElementById('btnAboutFace').onclick = () => issueFaceOrder(Math.PI);
+document.getElementById('btnAdvance').onclick = () => issueManeuverOrder12('advance', 8);
+document.getElementById('btnRetire').onclick = () => issueManeuverOrder12('retire', 6);
+document.getElementById('btnTurnLeft').onclick = () => issueManeuverOrder12('turn', Math.PI / 2);
+document.getElementById('btnTurnRight').onclick = () => issueManeuverOrder12('turn', -Math.PI / 2);
+document.getElementById('btnWheelLeft').onclick = () => issueManeuverOrder12('wheel', Math.PI / 4);
+document.getElementById('btnWheelRight').onclick = () => issueManeuverOrder12('wheel', -Math.PI / 4);
+document.getElementById('btnTestudo').onclick = () => toggleTestudo12();
+document.getElementById('fatigueFight').onchange = e => issueFatigueFight12(e.target.checked);
+document.getElementById('btnCasualty').onclick = () => removeFrontCasualty12();
+document.getElementById('btnAttrition').onclick = () => inflictCasualties12(0.25);
+document.getElementById('btnScatter').onclick = () => {
+  cfg.seed = (cfg.seed + 0x9e3779b9) >>> 0;
+  cfg.orderAnchorX = 0; cfg.orderAnchorZ = 0;
+  cfg.formFacing = 0; cfg.unitFacing = 0; cfg.fatigueFight = false;
+  document.getElementById('fatigueFight').checked = false;
+  document.getElementById('btnTestudo').classList.remove('active');
+  document.getElementById('btnTestudo').textContent = 'TESTUDO';
+  spawnField(); resetMinds();
+};
+document.getElementById('btnPause').onclick = () => {
+  cfg.paused = !cfg.paused;
+  document.getElementById('btnPause').textContent = cfg.paused ? 'Resume' : 'Pause';
+};
+document.getElementById('count').oninput = e => {
+  cfg.count = Number(e.target.value);
+  document.getElementById('countOut').textContent = String(cfg.count);
+  cfg.orderAnchorX = 0; cfg.orderAnchorZ = 0;
+  cfg.formFacing = 0; cfg.unitFacing = 0; cfg.fatigueFight = false;
+  document.getElementById('fatigueFight').checked = false;
+  spawnField(); resetMinds();
+};
+document.getElementById('spacing').oninput = e => {
+  cfg.spacing = Number(e.target.value);
+  document.getElementById('spOut').textContent = cfg.spacing.toFixed(2);
+  resetMinds();
+};
+document.getElementById('showTargets').onchange = e => { cfg.showTargets = e.target.checked; };
+document.getElementById('tempo').oninput = e => {
+  cfg.timeScale = Number(e.target.value);
+  document.getElementById('tempoOut').textContent = cfg.timeScale.toFixed(2).replace(/\.?0+$/, '') + '×';
+};
+
+addEventListener('keydown', e => {
+  if (e.key === '1') setShape('triple');
+  if (e.key === '2') setShape('rect');
+  if (e.key === '3') setShape('square');
+  if (e.key === 'q' || e.key === 'Q') issueFaceOrder(Math.PI / 2);
+  if (e.key === 'e' || e.key === 'E') issueFaceOrder(-Math.PI / 2);
+  if (e.key === 'f' || e.key === 'F') issueFaceOrder(Math.PI);
+  if (e.key === 'a' || e.key === 'A') issueManeuverOrder12('advance', 8);
+  if (e.key === 'b' || e.key === 'B') issueManeuverOrder12('retire', 6);
+  if (e.key === 'r' || e.key === 'R') { document.getElementById('btnScatter').click(); }
+  if (e.key === ' ') { e.preventDefault(); document.getElementById('btnPause').click(); }
+  if (e.key === '+' || e.key === '=') {
+    const el = document.getElementById('tempo');
+    el.value = String(Math.min(8, Number(el.value) + 0.25));
+    el.dispatchEvent(new Event('input'));
+  }
+  if (e.key === '-' || e.key === '_') {
+    const el = document.getElementById('tempo');
+    el.value = String(Math.max(0.25, Number(el.value) - 0.25));
+    el.dispatchEvent(new Event('input'));
+  }
+});
+
+// simple orbit
+let drag = null, lx = 0, ly = 0;
+canvas.addEventListener('pointerdown', e => {
+  drag = true; lx = e.clientX; ly = e.clientY;
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointerup', () => { drag = false; });
+canvas.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - lx, dy = e.clientY - ly;
+  lx = e.clientX; ly = e.clientY;
+  cam.yaw -= dx * 0.006;
+  cam.pitch = clamp(cam.pitch + dy * 0.004, 0.18, 1.35);
+});
+canvas.addEventListener('wheel', e => {
+  cam.dist = clamp(cam.dist + e.deltaY * 0.03, 16, 100);
+  e.preventDefault();
+}, { passive: false });
+
+// boot
+spawnField();
+globalThis.soldierABM = Object.freeze({
+  cfg,
+  soldiers,
+  step,
+  diagnostics: diagnostics12,
+  states: PHASE_NAMES,
+  setAgentState(id, state) {
+    const s = soldiers.find(a => a.id === id);
+    if (!s || PHASE_INDEX[state] == null) return false;
+    if (state === PHASE.DRESS && s.claimSi12 < 0) {
+      const L = getMentalLattice(s);
+      let si = worldToSlotIndex(s.x, s.z, L);
+      if (si < 0) si = s.homeRow12 * L.cols + s.homeFile12;
+      takeClaim12(s, L, clamp(si, 0, L.nSlots - 1));
+    }
+    setPhase12(s, state);
+    return true;
+  },
+  issueCommand(command, value) {
+    const c = String(command || '').toLowerCase();
+    if (c === 'advance') return issueManeuverOrder12('advance', value || 8);
+    if (c === 'retire' || c === 'retreat') return issueManeuverOrder12('retire', value || 6);
+    if (c === 'turn_left') return issueManeuverOrder12('turn', Math.abs(value || Math.PI / 2));
+    if (c === 'turn_right') return issueManeuverOrder12('turn', -Math.abs(value || Math.PI / 2));
+    if (c === 'wheel_left') return issueManeuverOrder12('wheel', Math.abs(value || Math.PI / 4));
+    if (c === 'wheel_right') return issueManeuverOrder12('wheel', -Math.abs(value || Math.PI / 4));
+    if (c === 'testudo') return toggleTestudo12();
+    return false;
+  },
+  enterTestudo() {
+    if (soldiers.some(s => s.drill === PHASE.TESTUDO)) return 0;
+    return toggleTestudo12();
+  },
+  exitTestudo() {
+    if (!soldiers.some(s => s.drill === PHASE.TESTUDO)) return 0;
+    return toggleTestudo12();
+  },
+  setFatigueSimulation(enabled) {
+    const el = document.getElementById('fatigueFight');
+    if (el) el.checked = !!enabled;
+    issueFatigueFight12(!!enabled);
+    return cfg.fatigueFight;
+  },
+  triggerFatigue(id) {
+    const s = soldiers.find(a => a.id === id);
+    if (!s) return false;
+    s.fatigue12 = 0;
+    s.fatigueEnabled12 = true;
+    if (s.drill === PHASE.DRESS) setPhase12(s, PHASE.FIGHT);
+    cfg.fatigueFight = true;
+    return true;
+  },
+  removeAgent(id = null) {
+    return removeFrontCasualty12(id);
+  },
+  inflictCasualties(fraction = 0.25) {
+    return inflictCasualties12(fraction);
+  },
+  runSeconds(seconds, dt = 1 / 30) {
+    if (!Number.isFinite(seconds) || seconds < 0 || !Number.isFinite(dt) || dt <= 0) {
+      throw new RangeError('runSeconds expects finite seconds >= 0 and dt > 0');
+    }
+    const count = Math.floor(seconds / dt);
+    for (let i = 0; i < count; i++) step(dt);
+    const remainder = seconds - count * dt;
+    if (remainder > 1e-9) step(remainder);
+    return diagnostics12();
+  },
+  reset(seed = cfg.seed) {
+    cfg.seed = seed >>> 0;
+    cfg.orderAnchorX = 0; cfg.orderAnchorZ = 0;
+    cfg.formFacing = 0; cfg.unitFacing = 0; cfg.fatigueFight = false;
+    const fatigue = document.getElementById('fatigueFight');
+    if (fatigue) fatigue.checked = false;
+    spawnField(); resetMinds();
+    return diagnostics12();
+  }
+});
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
