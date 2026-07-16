@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#091015">
+  <title>soldier_ABM_v31 — Command Battlefield Laboratory</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body data-command-team="blue" data-ui-mode="gameplay">
+  <canvas id="battlefield" aria-label="Interactive 2v2 century battlefield"></canvas>
+
+  <header class="topbar glass">
+    <nav class="ui-mode-toggle" aria-label="Interface mode">
+      <button id="modeGameplay" class="active" type="button" aria-pressed="true">GAMEPLAY</button>
+      <button id="modeDebug" type="button" aria-pressed="false">DEBUG</button>
+    </nav>
+    <div class="brand">
+      <span class="eyebrow">CENTURY BATTLE LABORATORY</span>
+      <strong>soldier_ABM_v31</strong>
+      <span class="principle">DOCTRINE + PERCEPTION · NO TELEPATHY</span>
+    </div>
+    <div class="scoreboard" aria-label="Battle score">
+      <div class="team-score blue">
+        <span>BLUE</span><b id="blueStrength">2 UNITS</b><small id="blueStatus">field reports pending</small>
+      </div>
+      <div class="clock">
+        <span id="matchResult">BATTLE IN PROGRESS</span>
+        <b id="battleClock">00:00</b>
+      </div>
+      <div class="team-score red">
+        <span>ENEMY</span><b id="redStrength">NO TRACKS</b><small id="redStatus">disposition unknown</small>
+      </div>
+    </div>
+  </header>
+
+  <aside class="control-deck glass">
+    <section>
+      <div class="section-heading">
+        <span>GENERAL'S INTENT</span>
+        <small>command <b id="commandTarget">BLUE TEAM</b></small>
+      </div>
+      <div class="century-tabs" role="group" aria-label="Select century">
+        <button data-century="blue-1" class="blue active">B1</button>
+        <button data-century="blue-2" class="blue">B2</button>
+        <span class="divider debug-only"></span>
+        <button data-century="red-1" class="red debug-only">R1</button>
+        <button data-century="red-2" class="red debug-only">R2</button>
+      </div>
+      <label class="switch-line">
+        <input id="applyTeam" type="checkbox" checked>
+        <span>Issue posture to both team centuries</span>
+      </label>
+      <label class="switch-line enemy-ai-line">
+        <input id="enemyGeneralAI" type="checkbox" checked>
+        <span>Enemy general AI <b id="enemyAIStatus">checking…</b></span>
+      </label>
+      <div class="general-debug-grid debug-only" aria-label="General cognition diagnostics">
+        <div><span>BLUE GENERAL</span><b id="blueGeneralDebug">OBSERVE · no decisions</b></div>
+        <div><span>RED GENERAL</span><b id="redGeneralDebug">OBSERVE · no decisions</b></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="posture-stack">
+        <button class="posture aggressive" data-posture="aggressive">
+          <span class="number">1</span>
+          <span><b>AGGRESSIVE / ADVANCE</b><small>Seek contact, maintain the line, exploit local pressure.</small></span>
+        </button>
+        <button class="posture hold" data-posture="hold">
+          <span class="number">2</span>
+          <span><b>STATIONARY / HOLD</b><small>Preserve frontage; counter only inside the local envelope.</small></span>
+        </button>
+        <button class="posture feint" data-posture="defensive-feint">
+          <span class="number">3</span>
+          <span><b>DEFENSIVE / FEINT</b><small>One century probes and retires while its partner covers.</small></span>
+        </button>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-heading">
+        <span>HOLD GROUND FLAG</span>
+        <small id="zoneHint">optional positional tether</small>
+      </div>
+      <div class="button-row">
+        <button id="btnPlaceZone" class="wide">PLACE ZONE</button>
+        <button id="btnClearZone" title="Remove selected century's hold zone">CLEAR</button>
+      </div>
+      <label class="range-line">radius
+        <input id="zoneRadius" type="range" min="5" max="30" step="1" value="14">
+        <output id="zoneRadiusOut">14m</output>
+      </label>
+      <p class="microcopy">A team order is split into left/right century sectors on receipt. It constrains decisions; it does not teleport formations or reveal enemies.</p>
+    </section>
+
+    <section class="debug-only">
+      <div class="section-heading"><span>MATCH PRESETS</span><small>postures only</small></div>
+      <div class="preset-grid">
+        <button data-scenario="assault">ASSAULT v HOLD</button>
+        <button data-scenario="meeting">MEETING FIGHT</button>
+        <button data-scenario="feint">FEINT TRAP</button>
+        <button data-scenario="mutual-feint">MUTUAL FEINT</button>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-heading"><span>SIMULATION</span><small id="simPerf" class="debug-only">— ms</small></div>
+      <div class="button-row">
+        <button id="btnPause" class="wide">PAUSE</button>
+        <button id="btnRestart">RESTART</button>
+        <button id="btnNewSeed">NEW SEED</button>
+      </div>
+      <label class="range-line">tempo
+        <input id="tempo" type="range" min="0.25" max="8" step="0.25" value="1">
+        <output id="tempoOut">1.0×</output>
+      </label>
+      <label class="range-line debug-only">men / century
+        <input id="strength" type="range" min="12" max="64" step="2" value="36">
+        <output id="strengthOut">36</output>
+      </label>
+      <span id="restartNote" class="debug-only">strength applies on restart</span>
+      <label class="field-line debug-only">seed <input id="seed" type="number" value="805322756" min="0" step="1"></label>
+      <div class="checks">
+        <label class="debug-only"><input id="showCognition" type="checkbox"> private enemy tracks</label>
+        <label><input id="showMessages" type="checkbox" checked> runners and signals</label>
+      </div>
+      <button id="btnResetCamera" class="quiet">RESET CAMERA</button>
+    </section>
+  </aside>
+
+  <aside class="order-of-battle">
+    <section class="oob-group friendly-command" aria-label="Friendly command reports">
+      <h2>MY COMMAND</h2>
+      <div class="oob-card-grid">
+        <article id="card-blue-1" class="century-card blue selected" data-century-card="blue-1" tabindex="0">
+          <header><b data-field="label">B1</b><span data-field="strength">REPORT PENDING</span></header>
+          <p data-field="state">Awaiting field report</p><small data-field="quality">FORMATION UNKNOWN</small><small data-field="comm">ORDER STATUS UNKNOWN</small>
+        </article>
+        <article id="card-blue-2" class="century-card blue" data-century-card="blue-2" tabindex="0">
+          <header><b data-field="label">B2</b><span data-field="strength">REPORT PENDING</span></header>
+          <p data-field="state">Awaiting field report</p><small data-field="quality">FORMATION UNKNOWN</small><small data-field="comm">ORDER STATUS UNKNOWN</small>
+        </article>
+      </div>
+    </section>
+    <section class="oob-group enemy-intelligence" aria-label="Enemy intelligence contacts">
+      <h2>ENEMY INTELLIGENCE</h2>
+      <div class="oob-card-grid">
+        <article id="card-red-1" class="century-card red" data-century-card="red-1" tabindex="-1">
+          <header><b data-field="label">CONTACT A</b><span data-field="strength">UNKNOWN</span></header>
+          <p data-field="state">No confirmed contact</p><small data-field="quality">CONFIDENCE UNKNOWN</small><small data-field="comm">RANGE · BEARING UNKNOWN</small>
+        </article>
+        <article id="card-red-2" class="century-card red" data-century-card="red-2" tabindex="-1">
+          <header><b data-field="label">CONTACT B</b><span data-field="strength">UNKNOWN</span></header>
+          <p data-field="state">No confirmed contact</p><small data-field="quality">CONFIDENCE UNKNOWN</small><small data-field="comm">RANGE · BEARING UNKNOWN</small>
+        </article>
+      </div>
+    </section>
+  </aside>
+
+  <section class="intel-strip glass" aria-label="Selected century intelligence">
+    <div class="selected-title"><span>SELECTED CENTURY</span><b id="selectedName">B1 · BLUE</b></div>
+    <dl>
+      <div><dt>POSTURE</dt><dd id="selectedPosture">Aggressive</dd></div>
+      <div class="debug-only"><dt>FSM / CAUSE</dt><dd><span id="selectedState">Hold</span> · <span id="selectedReason">Deployment</span></dd></div>
+      <div><dt>STRENGTH</dt><dd><span id="selectedStrength">36/36</span> · <span id="selectedMorale">100% perceived</span></dd></div>
+      <div><dt>CONTACT</dt><dd id="selectedContact">0%</dd></div>
+      <div class="gameplay-only"><dt>FIELD REPORT</dt><dd id="selectedReport">Awaiting runner or signal</dd></div>
+      <div class="debug-only"><dt>LINE ERROR</dt><dd id="selectedLine">0.0m gap · 0.0m depth</dd></div>
+      <div class="debug-only"><dt>NETWORK</dt><dd id="selectedOrders">1 orders · 0/0 tx/rx</dd></div>
+      <div><dt>HOLD ZONE</dt><dd id="selectedZone">none</dd></div>
+      <div class="debug-only"><dt>ROSTER QUALITY</dt><dd id="selectedQuality">Q 1.00 · base drill 1.00 · base weapon 1.00 · actual armor 1.00</dd></div>
+    </dl>
+    <div class="global-tallies debug-only">
+      <span><b id="casualtiesTotal">0</b> soldier casualties</span>
+      <span><b id="runnerLosses">0</b> runners lost</span>
+      <span><b id="hitCount">0</b> hits</span>
+      <span><b id="messageCount">0/0</b> delivered/dispatched</span>
+      <span><b id="runnerCount">0</b> runner deliveries</span>
+    </div>
+  </section>
+
+  <div class="camera-help">drag: orbit · shift/right-drag: pan · wheel: zoom · space: pause · <span class="gameplay-only">Q/W: select command</span><span class="debug-only">Q/W/O/P: select any century</span></div>
+  <div id="toast" role="status"></div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
